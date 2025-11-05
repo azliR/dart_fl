@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:args/args.dart';
 import 'package:path/path.dart' as path;
 import 'package:vm_service/vm_service.dart';
 import 'package:vm_service/vm_service_io.dart';
@@ -15,87 +14,109 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 void main(List<String> arguments) async {
-  final parser =
-      ArgParser()
-        ..addFlag('help', abbr: 'h', negatable: false, help: 'Show help')
-        ..addFlag(
-          'verbose',
-          abbr: 'v',
-          negatable: false,
-          help: 'Verbose output',
-        );
-
   _ParsedArgs parsed;
   try {
     parsed = _parseArguments(arguments);
   } on _UsageException catch (error) {
     stderr.writeln(_red(error.message));
     stderr.writeln('');
-    _printUsage(parser);
+    _printUsage();
     exitCode = 64;
     return;
   }
 
   final verbose = parsed.verbose;
-  final rest = parsed.rest;
+  final command = parsed.command;
+  final commandArgs = parsed.commandArgs;
 
-  if (parsed.showHelp || rest.isEmpty) {
-    _printUsage(parser);
+  // Debug logging
+  if (verbose) {
+    print(_gray('Debug: Parsed arguments'));
+    print(_gray('  showHelp: ${parsed.showHelp}'));
+    print(_gray('  verbose: ${parsed.verbose}'));
+    print(_gray('  command: ${parsed.command}'));
+    print(_gray('  commandArgs: ${parsed.commandArgs}'));
+  }
+
+  // Only show fl help if:
+  // 1. User explicitly requested help with no command (fl --help)
+  // 2. No command was provided at all (fl)
+  if (parsed.showHelp && command == null) {
+    if (verbose) print(_gray('Debug: Showing fl help (no command)'));
+    _printUsage();
     return;
   }
 
-  final command = rest.first;
+  if (command == null || command.isEmpty) {
+    // If no command but --help was set, we already handled it above
+    if (!parsed.showHelp) {
+      stderr.writeln(_red('No command specified'));
+      stderr.writeln('');
+    }
+    if (verbose) print(_gray('Debug: No command provided'));
+    _printUsage();
+    exitCode = 64;
+    return;
+  }
 
   if (command == 'run') {
-    final runArgs = rest.skip(1).toList();
-    final runner = FlutterRunner(forwardedArgs: runArgs, verbose: verbose);
+    if (verbose) print(_gray('Debug: Executing run command'));
+    final runner = FlutterRunner(forwardedArgs: commandArgs, verbose: verbose);
     await runner.run();
     return;
   }
 
   if (command == 'help') {
-    _printUsage(parser);
+    if (verbose) print(_gray('Debug: Showing help command'));
+    _printUsage();
     return;
   }
 
   stderr.writeln(_red('Unknown command: $command'));
   stderr.writeln('');
-  _printUsage(parser);
+  _printUsage();
   exitCode = 64;
 }
 
-void _printUsage(ArgParser parser) {
+void _printUsage() {
   print('fl - Enhanced Flutter CLI');
   print('');
-  print('Usage: fl [options] <command> [arguments]');
+  print('Usage: fl [global-options] <command> [command-arguments]');
   print('');
-  print('Global options:');
-  print(parser.usage);
+  print('Global options (must come before command):');
+  print('  -h, --help       Show this help message');
+  print('  -v, --verbose    Verbose output');
   print('');
   print('Commands:');
   print('  run [flutter args]   Launch Flutter with auto reload/log capture');
   print('  help                 Show this message');
   print('');
   print('Examples:');
-  print('  fl run');
-  print('  fl run --flavor staging');
-  print('  fl run --help');
+  print('  fl run                                    # Run with defaults');
+  print('  fl run --help                             # Show Flutter run help');
+  print('  fl run --target lib/main_dev.dart         # Run specific target');
+  print('  fl run --flavor development --debug       # Run with flavor');
+  print('  fl -v run --target lib/main.dart          # Verbose mode');
+  print('  fl --help                                 # Show this message');
   print('');
   print(_cyan('Commands during execution:'));
   print('  r - Hot reload');
   print('  R - Hot restart');
   print('  q - Quit');
+  print('  h - Help');
 }
 
 class _ParsedArgs {
   final bool showHelp;
   final bool verbose;
-  final List<String> rest;
+  final String? command;
+  final List<String> commandArgs;
 
   const _ParsedArgs({
     required this.showHelp,
     required this.verbose,
-    required this.rest,
+    required this.command,
+    required this.commandArgs,
   });
 }
 
@@ -108,41 +129,77 @@ class _UsageException implements Exception {
   String toString() => message;
 }
 
+/// Parse arguments: global flags ONLY before command, everything after command passes through
 _ParsedArgs _parseArguments(List<String> arguments) {
   var showHelp = false;
   var verbose = false;
-  final rest = <String>[];
+  String? command;
+  final commandArgs = <String>[];
 
   var index = 0;
+
+  // Phase 1: Parse global options until we hit a non-flag argument (the command)
   while (index < arguments.length) {
     final current = arguments[index];
 
+    // Check for -- separator (everything after is for the command)
     if (current == '--') {
-      rest.addAll(arguments.sublist(index + 1));
+      index++;
       break;
     }
 
+    // Check for global help flag
     if (current == '--help' || current == '-h') {
       showHelp = true;
       index++;
       continue;
     }
 
+    // Check for global verbose flag
     if (current == '--verbose' || current == '-v') {
       verbose = true;
       index++;
       continue;
     }
 
+    // If it starts with dash but isn't recognized, it's an error
+    // (only if we haven't found a command yet)
     if (current.startsWith('-')) {
-      throw _UsageException('Unknown option: $current');
+      throw _UsageException(
+        'Unknown global option: $current\n'
+        'Global options must come before the command.\n'
+        'Use "fl <command> --help" to see command-specific options.',
+      );
     }
 
-    rest.addAll(arguments.sublist(index));
+    // This must be the command - stop parsing global options
+    command = current;
+    index++;
     break;
   }
 
-  return _ParsedArgs(showHelp: showHelp, verbose: verbose, rest: rest);
+  // Phase 2: Everything remaining goes to the command (no parsing)
+  while (index < arguments.length) {
+    commandArgs.add(arguments[index]);
+    index++;
+  }
+
+  // Debug output if verbose was set
+  if (verbose) {
+    stderr.writeln(_gray('Parse phase complete:'));
+    stderr.writeln(_gray('  Input args: $arguments'));
+    stderr.writeln(_gray('  showHelp: $showHelp'));
+    stderr.writeln(_gray('  verbose: $verbose'));
+    stderr.writeln(_gray('  command: $command'));
+    stderr.writeln(_gray('  commandArgs: $commandArgs'));
+  }
+
+  return _ParsedArgs(
+    showHelp: showHelp,
+    verbose: verbose,
+    command: command,
+    commandArgs: commandArgs,
+  );
 }
 
 class FlutterRunner {
@@ -163,8 +220,12 @@ class FlutterRunner {
   Future<void> run() async {
     print(_cyan('🚀 Starting Flutter with enhanced features...'));
 
-    // Start Flutter process WITHOUT machine mode
+    // Build flutter command
     final flutterArgs = ['run', ...forwardedArgs];
+
+    if (verbose) {
+      print(_gray('Running: flutter ${flutterArgs.join(' ')}'));
+    }
 
     _process = await Process.start('flutter', flutterArgs);
 
@@ -198,33 +259,21 @@ class FlutterRunner {
     // Print the line
     print(line);
 
-    // Check for VM Service URI - More robust regex
-    // This pattern looks for lines containing "VM Service", "Observatory", or "Dart VM Service"
-    // followed by a URL starting with http://
+    // Check for VM Service URI
     final vmServiceMatch = RegExp(
       r'(?:VM\s+Service|Observatory|Dart\s+VM\s+Service).*?(http://[^\s]+)',
-      caseSensitive:
-          false, // Make the search case-insensitive for "VM Service" etc.
+      caseSensitive: false,
     ).firstMatch(line);
 
     if (vmServiceMatch != null) {
-      _vmServiceUri =
-          vmServiceMatch.group(
-            1,
-          )!; // Use ! as group(1) is guaranteed by the regex pattern if match exists
+      _vmServiceUri = vmServiceMatch.group(1)!;
       if (verbose) {
         print(_gray('Found VM Service URI: $_vmServiceUri'));
-      }
-      // Attempt connection as soon as URI is found
-      if (!_appStarted) {
-        // If URI is found before app is considered started, it's okay,
-        // connection attempt will happen here, potentially before the
-        // "App started successfully" message.
       }
       _connectToVmService(_vmServiceUri!);
     }
 
-    // Check if app started - This message usually comes after the URI
+    // Check if app started
     if (line.contains('Flutter run key commands') ||
         line.contains('An Observatory debugger') ||
         line.contains('A Dart VM Service')) {
@@ -233,16 +282,9 @@ class FlutterRunner {
         print(_green('✓ App started successfully'));
         print(_cyan('Commands: r=reload, R=restart, q=quit, h=help'));
 
-        // The URI should ideally be found before this, but double-check
-        // if connection attempt hasn't happened yet due to regex mismatch
-        // or timing. This part might be redundant now but is safe.
         if (_vmServiceUri != null && _vmService == null) {
           if (verbose) {
-            print(
-              _gray(
-                'App started, attempting VM Service connection (fallback).',
-              ),
-            );
+            print(_gray('Attempting VM Service connection (fallback).'));
           }
           _connectToVmService(_vmServiceUri!);
         }
@@ -260,23 +302,17 @@ class FlutterRunner {
   }
 
   Future<void> _connectToVmService(String uri) async {
-    // Prevent multiple connection attempts if URI is detected multiple times
     if (_vmService != null) {
       if (verbose) {
-        print(
-          _gray(
-            'Already connected to VM Service, skipping new connection attempt.',
-          ),
-        );
+        print(_gray('Already connected to VM Service.'));
       }
       return;
     }
 
     try {
-      // Convert observatory URI to WebSocket URI
       final wsUri = uri
           .replaceFirst('http://', 'ws://')
-          .replaceFirst('https://', 'wss://'); // Also handle https if needed
+          .replaceFirst('https://', 'wss://');
 
       if (verbose) {
         print(_gray('Connecting to VM Service at $wsUri'));
@@ -286,14 +322,10 @@ class FlutterRunner {
 
       print(_green('✓ Connected to VM Service for enhanced logging'));
 
-      // Subscribe to streams before listening to them
       await _vmService!.streamListen(EventStreams.kStdout);
       await _vmService!.streamListen(EventStreams.kStderr);
-      await _vmService!.streamListen(
-        EventStreams.kLogging,
-      ); // Use constant for Logging stream
+      await _vmService!.streamListen(EventStreams.kLogging);
 
-      // Listen to stdout stream
       _vmService!.onStdoutEvent.listen((event) {
         try {
           final message = utf8.decode(base64Decode(event.bytes!));
@@ -308,7 +340,6 @@ class FlutterRunner {
         }
       });
 
-      // Listen to stderr stream
       _vmService!.onStderrEvent.listen((event) {
         try {
           final message = utf8.decode(base64Decode(event.bytes!));
@@ -323,7 +354,6 @@ class FlutterRunner {
         }
       });
 
-      // Listen to logging events (dart:developer log)
       _vmService!.onLoggingEvent.listen((event) async {
         final iso = event.isolate?.id;
         final rec = event.logRecord;
@@ -348,9 +378,6 @@ class FlutterRunner {
       if (verbose) {
         print(_gray('Enhanced logging will not be available'));
       }
-      // Optionally reset _vmServiceUri if connection fails immediately
-      // to allow retry if the URI appears again (though unlikely)
-      // _vmService = null; // _vmService is already null if connect failed
     }
   }
 
@@ -400,14 +427,12 @@ class FlutterRunner {
   }
 
   void _setupKeyboardInput() {
-    // Set stdin to raw mode for immediate key capture
     stdin.lineMode = false;
     stdin.echoMode = false;
 
     stdin.listen((data) {
       final char = String.fromCharCodes(data);
 
-      // Handle lowercase 'r' for reload
       if (char == 'r') {
         if (!_appStarted) {
           print(_yellow('⏳ Waiting for app to start...'));
@@ -417,7 +442,6 @@ class FlutterRunner {
         return;
       }
 
-      // Handle uppercase 'R' for restart
       if (char == 'R') {
         if (!_appStarted) {
           print(_yellow('⏳ Waiting for app to start...'));
@@ -427,14 +451,12 @@ class FlutterRunner {
         return;
       }
 
-      // Handle quit
       if (char == 'q' || char == 'Q') {
         print(_cyan('\n👋 Quitting...'));
         _cleanup();
         exit(0);
       }
 
-      // Handle help
       if (char == 'h' || char == 'H') {
         _showHelp();
         return;
@@ -483,8 +505,6 @@ class FlutterRunner {
     try {
       print(_cyan('🔥 Hot reload...'));
       _process!.stdin.write('r');
-
-      // Wait before allowing another reload
       await Future.delayed(const Duration(milliseconds: 1000));
     } catch (e) {
       print(_red('Hot reload failed: $e'));
@@ -501,8 +521,6 @@ class FlutterRunner {
     try {
       print(_cyan('🔄 Hot restart...'));
       _process!.stdin.write('R');
-
-      // Wait before allowing another action
       await Future.delayed(const Duration(milliseconds: 2000));
     } catch (e) {
       print(_red('Hot restart failed: $e'));
@@ -527,7 +545,7 @@ class FlutterRunner {
   Future<void> _cleanup() async {
     await _watcherSubscription?.cancel();
     _reloadDebounceTimer?.cancel();
-    await _vmService?.dispose(); // Dispose the VM Service connection properly
+    await _vmService?.dispose();
     _process?.kill();
   }
 }
