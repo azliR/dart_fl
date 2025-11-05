@@ -66,6 +66,12 @@ void main(List<String> arguments) async {
     return;
   }
 
+  if (command == 'pub') {
+    if (verbose) print(_gray('Debug: Executing pub command'));
+    await _handlePubCommand(commandArgs, verbose);
+    return;
+  }
+
   if (command == 'help') {
     if (verbose) print(_gray('Debug: Showing help command'));
     _printUsage();
@@ -76,6 +82,290 @@ void main(List<String> arguments) async {
   stderr.writeln('');
   _printUsage();
   exitCode = 64;
+}
+
+Future<void> _handlePubCommand(List<String> args, bool verbose) async {
+  if (args.isEmpty) {
+    stderr.writeln(_red('No pub subcommand specified'));
+    stderr.writeln('');
+    stderr.writeln('Available subcommands:');
+    stderr.writeln(
+      '  sort [options]    Sort dependencies in pubspec.yaml alphabetically',
+    );
+    stderr.writeln('');
+    stderr.writeln('Sort options:');
+    stderr.writeln(
+      '  --create-backup   Create a backup file (pubspec.yaml.backup)',
+    );
+    exitCode = 64;
+    return;
+  }
+
+  final subcommand = args.first;
+
+  if (subcommand == 'sort') {
+    // Parse sort-specific options
+    var createBackup = false;
+    for (var i = 1; i < args.length; i++) {
+      if (args[i] == '--create-backup') {
+        createBackup = true;
+      } else {
+        stderr.writeln(_red('Unknown option: ${args[i]}'));
+        stderr.writeln('');
+        stderr.writeln('Sort options:');
+        stderr.writeln(
+          '  --create-backup   Create a backup file (pubspec.yaml.backup)',
+        );
+        exitCode = 64;
+        return;
+      }
+    }
+
+    await _sortPubspec(verbose, createBackup);
+    return;
+  }
+
+  stderr.writeln(_red('Unknown pub subcommand: $subcommand'));
+  stderr.writeln('');
+  stderr.writeln('Available subcommands:');
+  stderr.writeln(
+    '  sort [options]    Sort dependencies in pubspec.yaml alphabetically',
+  );
+  exitCode = 64;
+}
+
+Future<void> _sortPubspec(bool verbose, bool createBackup) async {
+  final pubspecFile = File('pubspec.yaml');
+
+  if (!pubspecFile.existsSync()) {
+    stderr.writeln(_red('Error: pubspec.yaml not found in current directory'));
+    exitCode = 1;
+    return;
+  }
+
+  try {
+    if (verbose) {
+      print(_gray('Reading pubspec.yaml...'));
+    }
+
+    final content = await pubspecFile.readAsString();
+    final lines = content.split('\n');
+
+    final result = <String>[];
+    var inDependencies = false;
+    var inDevDependencies = false;
+    var currentSection = <String>[];
+    var sectionIndent = '';
+    var trailingEmptyLines = <String>[];
+
+    for (var i = 0; i < lines.length; i++) {
+      final line = lines[i];
+
+      // Check if we're entering dependencies section
+      if (line.trim() == 'dependencies:') {
+        // Flush any current section
+        if (currentSection.isNotEmpty) {
+          result.addAll(_sortDependencySection(currentSection, sectionIndent));
+          currentSection.clear();
+        }
+        // Add any trailing empty lines that were collected
+        result.addAll(trailingEmptyLines);
+        trailingEmptyLines.clear();
+
+        inDependencies = true;
+        inDevDependencies = false;
+        result.add(line);
+        continue;
+      }
+
+      // Check if we're entering dev_dependencies section
+      if (line.trim() == 'dev_dependencies:') {
+        // Flush any current section
+        if (currentSection.isNotEmpty) {
+          result.addAll(_sortDependencySection(currentSection, sectionIndent));
+          currentSection.clear();
+        }
+        // Add any trailing empty lines that were collected
+        result.addAll(trailingEmptyLines);
+        trailingEmptyLines.clear();
+
+        inDevDependencies = true;
+        inDependencies = false;
+        result.add(line);
+        continue;
+      }
+
+      // Check if we're leaving a dependencies section (new top-level key)
+      if ((inDependencies || inDevDependencies) &&
+          line.isNotEmpty &&
+          !line.startsWith(' ') &&
+          !line.startsWith('\t')) {
+        // Flush current section
+        if (currentSection.isNotEmpty) {
+          result.addAll(_sortDependencySection(currentSection, sectionIndent));
+          currentSection.clear();
+        }
+        // Add any trailing empty lines that were collected
+        result.addAll(trailingEmptyLines);
+        trailingEmptyLines.clear();
+
+        inDependencies = false;
+        inDevDependencies = false;
+        result.add(line);
+        continue;
+      }
+
+      // Collect lines within dependencies sections
+      if (inDependencies || inDevDependencies) {
+        if (line.trim().isNotEmpty) {
+          // If we have trailing empty lines, add them before this line
+          if (trailingEmptyLines.isNotEmpty) {
+            currentSection.addAll(trailingEmptyLines);
+            trailingEmptyLines.clear();
+          }
+
+          // Detect indent on first dependency
+          if (currentSection.isEmpty && line.startsWith(' ')) {
+            final match = RegExp(r'^(\s+)').firstMatch(line);
+            if (match != null) {
+              sectionIndent = match.group(1)!;
+            }
+          }
+          currentSection.add(line);
+        } else {
+          // Empty line within section - store it temporarily
+          trailingEmptyLines.add(line);
+        }
+      } else {
+        // Outside dependencies sections, just add the line
+        result.add(line);
+      }
+    }
+
+    // Flush any remaining section
+    if (currentSection.isNotEmpty) {
+      result.addAll(_sortDependencySection(currentSection, sectionIndent));
+    }
+    // Add any final trailing empty lines
+    result.addAll(trailingEmptyLines);
+
+    final sortedContent = result.join('\n');
+
+    // Create backup if requested
+    if (createBackup) {
+      final backupFile = File('pubspec.yaml.backup');
+      await backupFile.writeAsString(content);
+
+      if (verbose) {
+        print(_gray('Created backup: pubspec.yaml.backup'));
+      }
+    }
+
+    // Write sorted content
+    await pubspecFile.writeAsString(sortedContent);
+
+    print(_green('✓ Successfully sorted pubspec.yaml'));
+    if (createBackup) {
+      print(_gray('  Backup saved to: pubspec.yaml.backup'));
+    }
+  } catch (e) {
+    stderr.writeln(_red('Error sorting pubspec.yaml: $e'));
+    exitCode = 1;
+  }
+}
+
+List<String> _sortDependencySection(List<String> section, String indent) {
+  if (section.isEmpty) return section;
+
+  // Group multi-line dependencies
+  final dependencies = <_Dependency>[];
+  var i = 0;
+
+  while (i < section.length) {
+    final line = section[i];
+
+    if (line.trim().isEmpty) {
+      i++;
+      continue;
+    }
+
+    // Check if this is a dependency line (starts with indent and package name)
+    if (line.startsWith(indent) && line.trim().contains(':')) {
+      final packageLine = line;
+      final dependencyLines = [packageLine];
+
+      // Check if this is a multi-line dependency (has sub-properties)
+      if (i + 1 < section.length) {
+        final nextLine = section[i + 1];
+        final currentIndentLength = indent.length;
+
+        // If next line has more indent, it's a sub-property
+        if (nextLine.isNotEmpty && nextLine.startsWith(' ')) {
+          final nextIndentMatch = RegExp(r'^(\s+)').firstMatch(nextLine);
+          if (nextIndentMatch != null) {
+            final nextIndentLength = nextIndentMatch.group(1)!.length;
+
+            if (nextIndentLength > currentIndentLength) {
+              // This is a multi-line dependency, collect all sub-lines
+              i++;
+              while (i < section.length) {
+                final subLine = section[i];
+                if (subLine.trim().isEmpty) {
+                  i++;
+                  break;
+                }
+
+                final subIndentMatch = RegExp(r'^(\s+)').firstMatch(subLine);
+                if (subIndentMatch != null) {
+                  final subIndentLength = subIndentMatch.group(1)!.length;
+                  if (subIndentLength > currentIndentLength) {
+                    dependencyLines.add(subLine);
+                    i++;
+                  } else {
+                    break;
+                  }
+                } else {
+                  break;
+                }
+              }
+              i--; // Adjust because we'll increment at the end of the outer loop
+            }
+          }
+        }
+      }
+
+      // Extract package name for sorting
+      final nameMatch = RegExp(r'^\s*([^:]+):').firstMatch(packageLine);
+      if (nameMatch != null) {
+        final name = nameMatch.group(1)!.trim();
+        dependencies.add(_Dependency(name, dependencyLines));
+      }
+
+      i++;
+    } else {
+      i++;
+    }
+  }
+
+  // Sort dependencies by name (case-insensitive)
+  dependencies.sort(
+    (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+  );
+
+  // Reconstruct the section
+  final result = <String>[];
+  for (final dep in dependencies) {
+    result.addAll(dep.lines);
+  }
+
+  return result;
+}
+
+class _Dependency {
+  final String name;
+  final List<String> lines;
+
+  _Dependency(this.name, this.lines);
 }
 
 void _printUsage() {
@@ -89,6 +379,10 @@ void _printUsage() {
   print('');
   print('Commands:');
   print('  run [flutter args]   Launch Flutter with auto reload/log capture');
+  print('  pub <subcommand>     Pub-related utilities');
+  print(
+    '    sort               Sort dependencies in pubspec.yaml alphabetically',
+  );
   print('  help                 Show this message');
   print('');
   print('Examples:');
@@ -97,6 +391,9 @@ void _printUsage() {
   print('  fl run --target lib/main_dev.dart         # Run specific target');
   print('  fl run --flavor development --debug       # Run with flavor');
   print('  fl -v run --target lib/main.dart          # Verbose mode');
+  print(
+    '  fl pub sort                               # Sort pubspec.yaml dependencies',
+  );
   print('  fl --help                                 # Show this message');
   print('');
   print(_cyan('Commands during execution:'));
