@@ -1,3 +1,9 @@
+## 0.7.1
+
+- Implemented SIGINT (Ctrl+C) signal handling for graceful shutdown of `fl` and its subprocesses.
+- Updated `_cleanup` function to manage the shutdown process and prevent multiple cleanup calls.
+- Bumped version to 0.7.1.
+
 ## 0.7.0
 
 - Implemented dynamic detection of FVM configuration to use `fvm flutter` or `flutter` accordingly.
