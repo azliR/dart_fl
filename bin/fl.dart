@@ -14,7 +14,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 // Added version constant
-const String _version = '0.5.0';
+const String _version = '0.6.0';
 
 void main(List<String> arguments) async {
   _ParsedArgs parsed;
@@ -73,6 +73,12 @@ void main(List<String> arguments) async {
     if (verbose) print(_gray('Debug: Executing run command'));
     final runner = FlutterRunner(forwardedArgs: commandArgs, verbose: verbose);
     await runner.run();
+    return;
+  }
+
+  if (command == 'flutter') {
+    if (verbose) print(_gray('Debug: Forwarding to flutter command'));
+    await _runFlutterPassthrough(commandArgs, verbose);
     return;
   }
 
@@ -142,6 +148,27 @@ Future<void> _handlePubCommand(List<String> args, bool verbose) async {
     '  sort [options]    Sort dependencies in pubspec.yaml alphabetically',
   );
   exitCode = 64;
+}
+
+Future<void> _runFlutterPassthrough(List<String> args, bool verbose) async {
+  final rendered = args.isNotEmpty ? ' ${args.join(' ')}' : '';
+  if (verbose) {
+    print(_gray('Running: flutter$rendered'));
+  }
+
+  final process = await Process.start('flutter', args);
+
+  final stdinSubscription = stdin.listen(
+    process.stdin.add,
+    onDone: process.stdin.close,
+  );
+
+  process.stdout.listen(stdout.add);
+  process.stderr.listen(stderr.add);
+
+  final exitCode = await process.exitCode;
+  await stdinSubscription.cancel();
+  exit(exitCode);
 }
 
 Future<void> _sortPubspec(bool verbose, bool createBackup) async {
@@ -391,6 +418,7 @@ void _printUsage() {
   print('Commands:');
   print('  run [flutter args]    Launch Flutter with auto reload/log capture');
   print('  pub <subcommand>      Pub-related utilities');
+  print('  flutter <flutter args>  Pass through any command to the Flutter CLI');
   print(
     '    sort              Sort dependencies in pubspec.yaml alphabetically',
   );
@@ -405,6 +433,7 @@ void _printUsage() {
   print('  fl pub sort                       # Sort pubspec.yaml dependencies');
   print('  fl --help                       # Show this message');
   print('  fl --version                    # Show version'); // Added example
+  print('  fl flutter doctor             # Run Flutter CLI commands directly');
   print('');
   print(_cyan('Commands during execution:'));
   print('  r - Hot reload');
