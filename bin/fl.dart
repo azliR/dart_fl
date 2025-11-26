@@ -14,7 +14,47 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 // Added version constant
-const String _version = '0.6.0';
+const String _version = '0.7.0';
+
+final _flutterCommand = _resolveFlutterCommand();
+
+_FlutterCommand _resolveFlutterCommand() {
+  var currentDir = Directory.current.absolute;
+  while (true) {
+    final fvmDir = Directory(path.join(currentDir.path, '.fvm'));
+    final configFile = File(path.join(currentDir.path, 'fvm_config.json'));
+    final nestedConfig = File(
+      path.join(currentDir.path, '.fvm', 'fvm_config.json'),
+    );
+    if (fvmDir.existsSync() ||
+        configFile.existsSync() ||
+        nestedConfig.existsSync()) {
+      return const _FlutterCommand('fvm', ['flutter']);
+    }
+
+    final parent = currentDir.parent;
+    if (parent.path == currentDir.path) {
+      break;
+    }
+    currentDir = parent;
+  }
+
+  return const _FlutterCommand('flutter', []);
+}
+
+class _FlutterCommand {
+  final String executable;
+  final List<String> prefix;
+
+  const _FlutterCommand(this.executable, this.prefix);
+
+  List<String> withArgs(List<String> args) => [...prefix, ...args];
+}
+
+String _describeFlutterCommand(List<String> commandArgs) {
+  if (commandArgs.isEmpty) return _flutterCommand.executable;
+  return '${_flutterCommand.executable} ${commandArgs.join(' ')}';
+}
 
 void main(List<String> arguments) async {
   _ParsedArgs parsed;
@@ -151,12 +191,12 @@ Future<void> _handlePubCommand(List<String> args, bool verbose) async {
 }
 
 Future<void> _runFlutterPassthrough(List<String> args, bool verbose) async {
-  final rendered = args.isNotEmpty ? ' ${args.join(' ')}' : '';
+  final commandArgs = _flutterCommand.withArgs(args);
   if (verbose) {
-    print(_gray('Running: flutter$rendered'));
+    print(_gray('Running: ${_describeFlutterCommand(commandArgs)}'));
   }
 
-  final process = await Process.start('flutter', args);
+  final process = await Process.start(_flutterCommand.executable, commandArgs);
 
   final stdinSubscription = stdin.listen(
     process.stdin.add,
@@ -418,7 +458,9 @@ void _printUsage() {
   print('Commands:');
   print('  run [flutter args]    Launch Flutter with auto reload/log capture');
   print('  pub <subcommand>      Pub-related utilities');
-  print('  flutter <flutter args>  Pass through any command to the Flutter CLI');
+  print(
+    '  flutter <flutter args>  Pass through any command to the Flutter CLI',
+  );
   print(
     '    sort              Sort dependencies in pubspec.yaml alphabetically',
   );
@@ -579,11 +621,12 @@ class FlutterRunner {
 
     flutterArgs.addAll(forwardedArgs);
 
+    final commandArgs = _flutterCommand.withArgs(flutterArgs);
     if (verbose) {
-      print(_gray('Running: flutter ${flutterArgs.join(' ')}'));
+      print(_gray('Running: ${_describeFlutterCommand(commandArgs)}'));
     }
 
-    _process = await Process.start('flutter', flutterArgs);
+    _process = await Process.start(_flutterCommand.executable, commandArgs);
 
     // Handle stdout
     _process!.stdout
@@ -706,7 +749,8 @@ class FlutterRunner {
 
   Future<List<_FlutterDevice>> _fetchDevices() async {
     try {
-      final result = await Process.run('flutter', ['devices', '--machine']);
+      final commandArgs = _flutterCommand.withArgs(['devices', '--machine']);
+      final result = await Process.run(_flutterCommand.executable, commandArgs);
       if (result.exitCode != 0) {
         if (verbose) {
           stderr.writeln(_red('Failed to list devices: ${result.stderr}'));
