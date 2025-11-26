@@ -1,3 +1,9 @@
+## 0.6.0
+
+- Implemented `flutter` command to directly pass arguments to the Flutter CLI.
+- Updated usage documentation for the new `flutter` command.
+- Bumped version to 0.6.0.
+
 ## 0.5.0
 
 - Implemented automatic device selection and prompting when running `flutter run`.
