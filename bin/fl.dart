@@ -14,7 +14,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 // Added version constant
-const String _version = '0.4.0';
+const String _version = '0.5.0';
 
 void main(List<String> arguments) async {
   _ParsedArgs parsed;
@@ -539,14 +539,22 @@ class FlutterRunner {
   Future<void> run() async {
     print(_cyan('🚀 Starting Flutter with enhanced features...'));
 
+    final deviceId = await _resolveDeviceId();
+
     // Build flutter command
-    final flutterArgs = ['run', ...forwardedArgs];
+    final flutterArgs = ['run'];
+
+    if (deviceId != null) {
+      flutterArgs.addAll(['-d', deviceId]);
+    }
+
+    flutterArgs.addAll(forwardedArgs);
 
     if (verbose) {
       print(_gray('Running: flutter ${flutterArgs.join(' ')}'));
     }
 
-    _process = await Process.start('fvm flutter', flutterArgs);
+    _process = await Process.start('flutter', flutterArgs);
 
     // Handle stdout
     _process!.stdout
@@ -617,6 +625,196 @@ class FlutterRunner {
 
     if (line.contains('Restarted') || line.contains('restarted')) {
       print(_green('✓ Hot restart complete'));
+    }
+  }
+
+  Future<String?> _resolveDeviceId() async {
+    if (_hasDeviceIdFlag()) {
+      if (verbose) {
+        print(
+          _gray('Device flag already provided; skipping device selection.'),
+        );
+      }
+      return null;
+    }
+
+    final devices = await _fetchDevices();
+    if (devices.isEmpty) return null;
+
+    if (devices.length == 1) {
+      final selected = devices.first;
+      if (verbose) {
+        print(
+          _gray(
+            'Single device detected (${selected.name} / ${selected.id}); using it automatically.',
+          ),
+        );
+      }
+      return selected.id;
+    }
+
+    if (!stdin.hasTerminal) {
+      stderr.writeln(
+        _red(
+          'Multiple devices connected but stdin is not a terminal; specify a device with -d <deviceId>.',
+        ),
+      );
+      exit(64);
+    }
+
+    _printDeviceChoices(devices);
+    return _promptDeviceSelection(devices);
+  }
+
+  bool _hasDeviceIdFlag() {
+    for (final arg in forwardedArgs) {
+      if (arg == '-d' || arg == '--device-id') return true;
+      if (arg.startsWith('-d') && arg.length > 2) return true;
+      if (arg.startsWith('--device-id=')) return true;
+    }
+    return false;
+  }
+
+  Future<List<_FlutterDevice>> _fetchDevices() async {
+    try {
+      final result = await Process.run('flutter', ['devices', '--machine']);
+      if (result.exitCode != 0) {
+        if (verbose) {
+          stderr.writeln(_red('Failed to list devices: ${result.stderr}'));
+        }
+        return [];
+      }
+
+      final output = (result.stdout as String).trim();
+      return _parseDevicesFromOutput(output);
+    } catch (error) {
+      if (verbose) {
+        stderr.writeln(_red('Failed to list devices: $error'));
+      }
+      return [];
+    }
+  }
+
+  List<_FlutterDevice> _parseDevicesFromOutput(String output) {
+    if (output.isEmpty) return <_FlutterDevice>[];
+
+    try {
+      final decoded = json.decode(output);
+      return _extractDevices(decoded);
+    } catch (_) {
+      final devices = <_FlutterDevice>[];
+      for (final line in const LineSplitter().convert(output)) {
+        final trimmed = line.trim();
+        if (trimmed.isEmpty) continue;
+        try {
+          final decoded = json.decode(trimmed);
+          devices.addAll(_extractDevices(decoded));
+        } catch (_) {
+          // ignore malformed lines
+        }
+      }
+      return devices;
+    }
+  }
+
+  List<_FlutterDevice> _extractDevices(dynamic decoded) {
+    final devices = <_FlutterDevice>[];
+
+    void addFromMap(Map<String, dynamic> deviceJson) {
+      final id = deviceJson['id']?.toString();
+      final name = deviceJson['name']?.toString();
+      if (id == null || name == null) return;
+      final targetPlatform = deviceJson['targetPlatform']?.toString();
+      final sdk = deviceJson['sdk']?.toString();
+      devices.add(
+        _FlutterDevice(
+          id: id,
+          name: name,
+          targetPlatform: targetPlatform,
+          sdk: sdk,
+        ),
+      );
+    }
+
+    if (decoded is List) {
+      for (final entry in decoded) {
+        if (entry is Map<String, dynamic>) {
+          addFromMap(entry);
+        }
+      }
+      return devices;
+    }
+
+    if (decoded is Map<String, dynamic>) {
+      if (decoded['devices'] is List) {
+        for (final entry in decoded['devices']) {
+          if (entry is Map<String, dynamic>) {
+            addFromMap(entry);
+          }
+        }
+        return devices;
+      }
+
+      if (decoded['device'] is Map<String, dynamic>) {
+        addFromMap(decoded['device'] as Map<String, dynamic>);
+        return devices;
+      }
+
+      addFromMap(decoded);
+    }
+
+    return devices;
+  }
+
+  void _printDeviceChoices(List<_FlutterDevice> devices) {
+    print('');
+    print('Connected devices:');
+    for (var index = 0; index < devices.length; index++) {
+      final device = devices[index];
+      final platform = device.targetPlatform ?? 'unknown';
+      final sdk = device.sdk;
+      final sdkSuffix = sdk != null && sdk.isNotEmpty ? ' • $sdk' : '';
+      print(
+        '[${index + 1}]: ${device.name} (${device.id}) • $platform$sdkSuffix',
+      );
+    }
+    print('');
+  }
+
+  String? _promptDeviceSelection(List<_FlutterDevice> devices) {
+    while (true) {
+      stdout.write('Please choose one (or "q" to quit): ');
+      final input = stdin.readLineSync();
+      if (input == null) return null;
+      final trimmed = input.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.toLowerCase() == 'q') {
+        print(_cyan('\n👋 Quitting...'));
+        exit(0);
+      }
+
+      final index = int.tryParse(trimmed);
+      if (index != null && index >= 1 && index <= devices.length) {
+        return devices[index - 1].id;
+      }
+
+      final match =
+          devices
+              .where(
+                (device) =>
+                    device.id.toLowerCase() == trimmed.toLowerCase() ||
+                    device.name.toLowerCase() == trimmed.toLowerCase(),
+              )
+              .toList();
+      if (match.isNotEmpty) {
+        return match.first.id;
+      }
+
+      print(
+        _red(
+          'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
+        ),
+      );
     }
   }
 
@@ -867,4 +1065,18 @@ class FlutterRunner {
     await _vmService?.dispose();
     _process?.kill();
   }
+}
+
+class _FlutterDevice {
+  final String id;
+  final String name;
+  final String? targetPlatform;
+  final String? sdk;
+
+  const _FlutterDevice({
+    required this.id,
+    required this.name,
+    this.targetPlatform,
+    this.sdk,
+  });
 }
