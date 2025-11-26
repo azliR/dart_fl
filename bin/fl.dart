@@ -13,6 +13,9 @@ String _yellow(String text) => '\x1B[33m$text\x1B[0m';
 String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
+// Added version constant
+const String _version = '0.4.0';
+
 void main(List<String> arguments) async {
   _ParsedArgs parsed;
   try {
@@ -25,6 +28,12 @@ void main(List<String> arguments) async {
     return;
   }
 
+  // Handle --version flag
+  if (parsed.showVersion) {
+    print('fl version $_version');
+    return;
+  }
+
   final verbose = parsed.verbose;
   final command = parsed.command;
   final commandArgs = parsed.commandArgs;
@@ -33,6 +42,7 @@ void main(List<String> arguments) async {
   if (verbose) {
     print(_gray('Debug: Parsed arguments'));
     print(_gray('  showHelp: ${parsed.showHelp}'));
+    print(_gray('  showVersion: ${parsed.showVersion}')); // Updated
     print(_gray('  verbose: ${parsed.verbose}'));
     print(_gray('  command: ${parsed.command}'));
     print(_gray('  commandArgs: ${parsed.commandArgs}'));
@@ -374,27 +384,27 @@ void _printUsage() {
   print('Usage: fl [global-options] <command> [command-arguments]');
   print('');
   print('Global options (must come before command):');
-  print('  -h, --help       Show this help message');
-  print('  -v, --verbose    Verbose output');
+  print('  -h, --help        Show this help message');
+  print('      --version     Show version information'); // Added
+  print('  -v, --verbose     Verbose output');
   print('');
   print('Commands:');
-  print('  run [flutter args]   Launch Flutter with auto reload/log capture');
-  print('  pub <subcommand>     Pub-related utilities');
+  print('  run [flutter args]    Launch Flutter with auto reload/log capture');
+  print('  pub <subcommand>      Pub-related utilities');
   print(
-    '    sort               Sort dependencies in pubspec.yaml alphabetically',
+    '    sort              Sort dependencies in pubspec.yaml alphabetically',
   );
-  print('  help                 Show this message');
+  print('  help                Show this message');
   print('');
   print('Examples:');
-  print('  fl run                                    # Run with defaults');
-  print('  fl run --help                             # Show Flutter run help');
-  print('  fl run --target lib/main_dev.dart         # Run specific target');
-  print('  fl run --flavor development --debug       # Run with flavor');
-  print('  fl -v run --target lib/main.dart          # Verbose mode');
-  print(
-    '  fl pub sort                               # Sort pubspec.yaml dependencies',
-  );
-  print('  fl --help                                 # Show this message');
+  print('  fl run                          # Run with defaults');
+  print('  fl run --help                   # Show Flutter run help');
+  print('  fl run --target lib/main_dev.dart   # Run specific target');
+  print('  fl run --flavor development --debug   # Run with flavor');
+  print('  fl -v run --target lib/main.dart    # Verbose mode');
+  print('  fl pub sort                       # Sort pubspec.yaml dependencies');
+  print('  fl --help                       # Show this message');
+  print('  fl --version                    # Show version'); // Added example
   print('');
   print(_cyan('Commands during execution:'));
   print('  r - Hot reload');
@@ -405,12 +415,14 @@ void _printUsage() {
 
 class _ParsedArgs {
   final bool showHelp;
+  final bool showVersion; // Added
   final bool verbose;
   final String? command;
   final List<String> commandArgs;
 
   const _ParsedArgs({
     required this.showHelp,
+    required this.showVersion, // Added
     required this.verbose,
     required this.command,
     required this.commandArgs,
@@ -429,6 +441,7 @@ class _UsageException implements Exception {
 /// Parse arguments: global flags ONLY before command, everything after command passes through
 _ParsedArgs _parseArguments(List<String> arguments) {
   var showHelp = false;
+  var showVersion = false; // Added
   var verbose = false;
   String? command;
   final commandArgs = <String>[];
@@ -448,6 +461,13 @@ _ParsedArgs _parseArguments(List<String> arguments) {
     // Check for global help flag
     if (current == '--help' || current == '-h') {
       showHelp = true;
+      index++;
+      continue;
+    }
+
+    // Check for global version flag
+    if (current == '--version') {
+      showVersion = true;
       index++;
       continue;
     }
@@ -486,6 +506,7 @@ _ParsedArgs _parseArguments(List<String> arguments) {
     stderr.writeln(_gray('Parse phase complete:'));
     stderr.writeln(_gray('  Input args: $arguments'));
     stderr.writeln(_gray('  showHelp: $showHelp'));
+    stderr.writeln(_gray('  showVersion: $showVersion')); // Added
     stderr.writeln(_gray('  verbose: $verbose'));
     stderr.writeln(_gray('  command: $command'));
     stderr.writeln(_gray('  commandArgs: $commandArgs'));
@@ -493,6 +514,7 @@ _ParsedArgs _parseArguments(List<String> arguments) {
 
   return _ParsedArgs(
     showHelp: showHelp,
+    showVersion: showVersion, // Added
     verbose: verbose,
     command: command,
     commandArgs: commandArgs,
@@ -524,7 +546,7 @@ class FlutterRunner {
       print(_gray('Running: flutter ${flutterArgs.join(' ')}'));
     }
 
-    _process = await Process.start('flutter', flutterArgs);
+    _process = await Process.start('fvm flutter', flutterArgs);
 
     // Handle stdout
     _process!.stdout

@@ -12,8 +12,16 @@ brings `dart:developer` logs into your terminal without changing your workflow.
 
 ## Installation
 
+Clone this repo:
+
 ```sh
-dart pub global activate fl
+git clone https://github.com/azliR/dart_fl.git
+```
+
+Install the package:
+
+```sh
+dart pub global activate --source path .
 ```
 
 Make sure `$HOME/.pub-cache/bin` (or the equivalent on your platform) is on
