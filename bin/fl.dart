@@ -14,7 +14,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 // Added version constant
-const String _version = '0.7.0';
+const String _version = '0.7.1';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -603,6 +603,8 @@ class FlutterRunner {
   bool _isReloading = false;
   bool _appStarted = false;
   String? _vmServiceUri;
+  StreamSubscription<ProcessSignal>? _sigintSubscription;
+  bool _cleanupInProgress = false;
 
   FlutterRunner({List<String>? forwardedArgs, this.verbose = false})
     : forwardedArgs = forwardedArgs ?? const [];
@@ -642,6 +644,9 @@ class FlutterRunner {
 
     // Setup keyboard input
     _setupKeyboardInput();
+
+    // Setup signal handler for Ctrl+C
+    _setupSignalHandler();
 
     // Setup file watcher
     _setupFileWatcher();
@@ -1119,6 +1124,15 @@ class FlutterRunner {
     }
   }
 
+  void _setupSignalHandler() {
+    _sigintSubscription = ProcessSignal.sigint.watch().listen((_) async {
+      if (_cleanupInProgress) return;
+      print(_cyan('\n👋 Received Ctrl+C; cleaning up...'));
+      await _cleanup();
+      exit(130);
+    });
+  }
+
   void _showHelp() {
     print('');
     print(_cyan('═══════════════════════════════'));
@@ -1133,6 +1147,9 @@ class FlutterRunner {
   }
 
   Future<void> _cleanup() async {
+    if (_cleanupInProgress) return;
+    _cleanupInProgress = true;
+    await _sigintSubscription?.cancel();
     await _watcherSubscription?.cancel();
     _reloadDebounceTimer?.cancel();
     await _vmService?.dispose();
