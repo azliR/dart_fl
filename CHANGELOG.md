@@ -1,3 +1,9 @@
+## 0.7.0
+
+- Implemented dynamic detection of FVM configuration to use `fvm flutter` or `flutter` accordingly.
+- Refactored `FlutterRunner` and `_runFlutterPassthrough` to leverage the new FVM integration.
+- Bumped version to 0.7.0.
+
 ## 0.6.0
 
 - Implemented `flutter` command to directly pass arguments to the Flutter CLI.
