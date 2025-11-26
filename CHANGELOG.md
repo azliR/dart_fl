@@ -1,3 +1,10 @@
+## 0.4.0
+
+- Added `--version` flag to display the current version of the CLI.
+- Updated installation instructions in `README.md`.
+- Updated `Process.start('flutter', flutterArgs)` to `Process.start('fvm flutter', flutterArgs)` for better FVM support.
+- Bumped version to 0.4.0.
+
 ## 0.3.0
 
 - Added `pub sort` subcommand to sort dependencies in `pubspec.yaml` alphabetically.
