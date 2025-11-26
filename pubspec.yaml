@@ -1,6 +1,6 @@
 name: fl
 description: Flutter run helper with auto reload and dart:developer logs.
-version: 0.7.1
+version: 0.7.2
 repository: https://github.com/azliR/dart_fl
 
 executables:

@@ -13,11 +13,12 @@ String _yellow(String text) => '\x1B[33m$text\x1B[0m';
 String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
-// Added version constant
-const String _version = '0.7.1';
+/// Current CLI version string.
+const String _version = '0.7.2';
 
 final _flutterCommand = _resolveFlutterCommand();
 
+/// Detects whether to run Flutter via FVM or the global installation.
 _FlutterCommand _resolveFlutterCommand() {
   var currentDir = Directory.current.absolute;
   while (true) {
@@ -46,16 +47,19 @@ class _FlutterCommand {
   final String executable;
   final List<String> prefix;
 
+  /// Builds a Flutter command with a consistent executable and prefix args.
   const _FlutterCommand(this.executable, this.prefix);
 
   List<String> withArgs(List<String> args) => [...prefix, ...args];
 }
 
+/// Formats the Flutter command for display.
 String _describeFlutterCommand(List<String> commandArgs) {
   if (commandArgs.isEmpty) return _flutterCommand.executable;
   return '${_flutterCommand.executable} ${commandArgs.join(' ')}';
 }
 
+/// Entry point for the CLI.
 void main(List<String> arguments) async {
   _ParsedArgs parsed;
   try {
@@ -68,7 +72,6 @@ void main(List<String> arguments) async {
     return;
   }
 
-  // Handle --version flag
   if (parsed.showVersion) {
     print('fl version $_version');
     return;
@@ -78,19 +81,15 @@ void main(List<String> arguments) async {
   final command = parsed.command;
   final commandArgs = parsed.commandArgs;
 
-  // Debug logging
   if (verbose) {
     print(_gray('Debug: Parsed arguments'));
     print(_gray('  showHelp: ${parsed.showHelp}'));
-    print(_gray('  showVersion: ${parsed.showVersion}')); // Updated
+    print(_gray('  showVersion: ${parsed.showVersion}'));
     print(_gray('  verbose: ${parsed.verbose}'));
     print(_gray('  command: ${parsed.command}'));
     print(_gray('  commandArgs: ${parsed.commandArgs}'));
   }
 
-  // Only show fl help if:
-  // 1. User explicitly requested help with no command (fl --help)
-  // 2. No command was provided at all (fl)
   if (parsed.showHelp && command == null) {
     if (verbose) print(_gray('Debug: Showing fl help (no command)'));
     _printUsage();
@@ -98,7 +97,6 @@ void main(List<String> arguments) async {
   }
 
   if (command == null || command.isEmpty) {
-    // If no command but --help was set, we already handled it above
     if (!parsed.showHelp) {
       stderr.writeln(_red('No command specified'));
       stderr.writeln('');
@@ -140,6 +138,7 @@ void main(List<String> arguments) async {
   exitCode = 64;
 }
 
+/// Routes `fl pub` subcommands to the appropriate handler.
 Future<void> _handlePubCommand(List<String> args, bool verbose) async {
   if (args.isEmpty) {
     stderr.writeln(_red('No pub subcommand specified'));
@@ -160,7 +159,6 @@ Future<void> _handlePubCommand(List<String> args, bool verbose) async {
   final subcommand = args.first;
 
   if (subcommand == 'sort') {
-    // Parse sort-specific options
     var createBackup = false;
     for (var i = 1; i < args.length; i++) {
       if (args[i] == '--create-backup') {
@@ -190,6 +188,7 @@ Future<void> _handlePubCommand(List<String> args, bool verbose) async {
   exitCode = 64;
 }
 
+/// Forwards arguments directly to the Flutter executable.
 Future<void> _runFlutterPassthrough(List<String> args, bool verbose) async {
   final commandArgs = _flutterCommand.withArgs(args);
   if (verbose) {
@@ -211,6 +210,7 @@ Future<void> _runFlutterPassthrough(List<String> args, bool verbose) async {
   exit(exitCode);
 }
 
+/// Sorts `dependencies` and `dev_dependencies` entries in `pubspec.yaml`.
 Future<void> _sortPubspec(bool verbose, bool createBackup) async {
   final pubspecFile = File('pubspec.yaml');
 
@@ -238,14 +238,11 @@ Future<void> _sortPubspec(bool verbose, bool createBackup) async {
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
 
-      // Check if we're entering dependencies section
       if (line.trim() == 'dependencies:') {
-        // Flush any current section
         if (currentSection.isNotEmpty) {
           result.addAll(_sortDependencySection(currentSection, sectionIndent));
           currentSection.clear();
         }
-        // Add any trailing empty lines that were collected
         result.addAll(trailingEmptyLines);
         trailingEmptyLines.clear();
 
@@ -255,14 +252,11 @@ Future<void> _sortPubspec(bool verbose, bool createBackup) async {
         continue;
       }
 
-      // Check if we're entering dev_dependencies section
       if (line.trim() == 'dev_dependencies:') {
-        // Flush any current section
         if (currentSection.isNotEmpty) {
           result.addAll(_sortDependencySection(currentSection, sectionIndent));
           currentSection.clear();
         }
-        // Add any trailing empty lines that were collected
         result.addAll(trailingEmptyLines);
         trailingEmptyLines.clear();
 
@@ -272,17 +266,14 @@ Future<void> _sortPubspec(bool verbose, bool createBackup) async {
         continue;
       }
 
-      // Check if we're leaving a dependencies section (new top-level key)
       if ((inDependencies || inDevDependencies) &&
           line.isNotEmpty &&
           !line.startsWith(' ') &&
           !line.startsWith('\t')) {
-        // Flush current section
         if (currentSection.isNotEmpty) {
           result.addAll(_sortDependencySection(currentSection, sectionIndent));
           currentSection.clear();
         }
-        // Add any trailing empty lines that were collected
         result.addAll(trailingEmptyLines);
         trailingEmptyLines.clear();
 
@@ -292,16 +283,13 @@ Future<void> _sortPubspec(bool verbose, bool createBackup) async {
         continue;
       }
 
-      // Collect lines within dependencies sections
       if (inDependencies || inDevDependencies) {
         if (line.trim().isNotEmpty) {
-          // If we have trailing empty lines, add them before this line
           if (trailingEmptyLines.isNotEmpty) {
             currentSection.addAll(trailingEmptyLines);
             trailingEmptyLines.clear();
           }
 
-          // Detect indent on first dependency
           if (currentSection.isEmpty && line.startsWith(' ')) {
             final match = RegExp(r'^(\s+)').firstMatch(line);
             if (match != null) {
@@ -310,25 +298,20 @@ Future<void> _sortPubspec(bool verbose, bool createBackup) async {
           }
           currentSection.add(line);
         } else {
-          // Empty line within section - store it temporarily
           trailingEmptyLines.add(line);
         }
       } else {
-        // Outside dependencies sections, just add the line
         result.add(line);
       }
     }
 
-    // Flush any remaining section
     if (currentSection.isNotEmpty) {
       result.addAll(_sortDependencySection(currentSection, sectionIndent));
     }
-    // Add any final trailing empty lines
     result.addAll(trailingEmptyLines);
 
     final sortedContent = result.join('\n');
 
-    // Create backup if requested
     if (createBackup) {
       final backupFile = File('pubspec.yaml.backup');
       await backupFile.writeAsString(content);
@@ -338,7 +321,6 @@ Future<void> _sortPubspec(bool verbose, bool createBackup) async {
       }
     }
 
-    // Write sorted content
     await pubspecFile.writeAsString(sortedContent);
 
     print(_green('✓ Successfully sorted pubspec.yaml'));
@@ -351,10 +333,10 @@ Future<void> _sortPubspec(bool verbose, bool createBackup) async {
   }
 }
 
+/// Sorts a dependency section and groups multi-line entries.
 List<String> _sortDependencySection(List<String> section, String indent) {
   if (section.isEmpty) return section;
 
-  // Group multi-line dependencies
   final dependencies = <_Dependency>[];
   var i = 0;
 
@@ -366,70 +348,46 @@ List<String> _sortDependencySection(List<String> section, String indent) {
       continue;
     }
 
-    // Check if this is a dependency line (starts with indent and package name)
     if (line.startsWith(indent) && line.trim().contains(':')) {
-      final packageLine = line;
-      final dependencyLines = [packageLine];
+      final dependencyLines = <String>[line];
+      final currentIndentLength = indent.length;
+      var j = i + 1;
 
-      // Check if this is a multi-line dependency (has sub-properties)
-      if (i + 1 < section.length) {
-        final nextLine = section[i + 1];
-        final currentIndentLength = indent.length;
-
-        // If next line has more indent, it's a sub-property
-        if (nextLine.isNotEmpty && nextLine.startsWith(' ')) {
-          final nextIndentMatch = RegExp(r'^(\s+)').firstMatch(nextLine);
-          if (nextIndentMatch != null) {
-            final nextIndentLength = nextIndentMatch.group(1)!.length;
-
-            if (nextIndentLength > currentIndentLength) {
-              // This is a multi-line dependency, collect all sub-lines
-              i++;
-              while (i < section.length) {
-                final subLine = section[i];
-                if (subLine.trim().isEmpty) {
-                  i++;
-                  break;
-                }
-
-                final subIndentMatch = RegExp(r'^(\s+)').firstMatch(subLine);
-                if (subIndentMatch != null) {
-                  final subIndentLength = subIndentMatch.group(1)!.length;
-                  if (subIndentLength > currentIndentLength) {
-                    dependencyLines.add(subLine);
-                    i++;
-                  } else {
-                    break;
-                  }
-                } else {
-                  break;
-                }
-              }
-              i--; // Adjust because we'll increment at the end of the outer loop
-            }
-          }
+      while (j < section.length) {
+        final subLine = section[j];
+        if (subLine.trim().isEmpty) {
+          j++;
+          break;
         }
+
+        final subIndentMatch = RegExp(r'^(\s+)').firstMatch(subLine);
+        final subIndentLength = subIndentMatch?.group(1)?.length;
+        if (subIndentLength != null && subIndentLength > currentIndentLength) {
+          dependencyLines.add(subLine);
+          j++;
+          continue;
+        }
+        break;
       }
 
-      // Extract package name for sorting
-      final nameMatch = RegExp(r'^\s*([^:]+):').firstMatch(packageLine);
+      final nameMatch = RegExp(r'^\s*([^:]+):').firstMatch(line);
       if (nameMatch != null) {
-        final name = nameMatch.group(1)!.trim();
-        dependencies.add(_Dependency(name, dependencyLines));
+        dependencies.add(
+          _Dependency(nameMatch.group(1)!.trim(), dependencyLines),
+        );
       }
 
-      i++;
-    } else {
-      i++;
+      i = j;
+      continue;
     }
+
+    i++;
   }
 
-  // Sort dependencies by name (case-insensitive)
   dependencies.sort(
     (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
   );
 
-  // Reconstruct the section
   final result = <String>[];
   for (final dep in dependencies) {
     result.addAll(dep.lines);
@@ -442,9 +400,11 @@ class _Dependency {
   final String name;
   final List<String> lines;
 
+  /// Represents a dependency block and its source lines.
   _Dependency(this.name, this.lines);
 }
 
+/// Prints CLI usage information.
 void _printUsage() {
   print('fl - Enhanced Flutter CLI');
   print('');
@@ -452,7 +412,7 @@ void _printUsage() {
   print('');
   print('Global options (must come before command):');
   print('  -h, --help        Show this help message');
-  print('      --version     Show version information'); // Added
+  print('      --version     Show version information');
   print('  -v, --verbose     Verbose output');
   print('');
   print('Commands:');
@@ -474,7 +434,7 @@ void _printUsage() {
   print('  fl -v run --target lib/main.dart    # Verbose mode');
   print('  fl pub sort                       # Sort pubspec.yaml dependencies');
   print('  fl --help                       # Show this message');
-  print('  fl --version                    # Show version'); // Added example
+  print('  fl --version                    # Show version');
   print('  fl flutter doctor             # Run Flutter CLI commands directly');
   print('');
   print(_cyan('Commands during execution:'));
@@ -485,15 +445,24 @@ void _printUsage() {
 }
 
 class _ParsedArgs {
+  /// Indicates whether help output was requested.
   final bool showHelp;
-  final bool showVersion; // Added
+
+  /// Indicates whether version output was requested.
+  final bool showVersion;
+
+  /// Enables verbose logging when true.
   final bool verbose;
+
+  /// The primary command after global options.
   final String? command;
+
+  /// Arguments forwarded to the command.
   final List<String> commandArgs;
 
   const _ParsedArgs({
     required this.showHelp,
-    required this.showVersion, // Added
+    required this.showVersion,
     required this.verbose,
     required this.command,
     required this.commandArgs,
@@ -509,49 +478,42 @@ class _UsageException implements Exception {
   String toString() => message;
 }
 
-/// Parse arguments: global flags ONLY before command, everything after command passes through
+/// Parses CLI arguments, keeping global flags before the command intact.
 _ParsedArgs _parseArguments(List<String> arguments) {
   var showHelp = false;
-  var showVersion = false; // Added
+  var showVersion = false;
   var verbose = false;
   String? command;
   final commandArgs = <String>[];
 
   var index = 0;
 
-  // Phase 1: Parse global options until we hit a non-flag argument (the command)
   while (index < arguments.length) {
     final current = arguments[index];
 
-    // Check for -- separator (everything after is for the command)
     if (current == '--') {
       index++;
       break;
     }
 
-    // Check for global help flag
     if (current == '--help' || current == '-h') {
       showHelp = true;
       index++;
       continue;
     }
 
-    // Check for global version flag
     if (current == '--version') {
       showVersion = true;
       index++;
       continue;
     }
 
-    // Check for global verbose flag
     if (current == '--verbose' || current == '-v') {
       verbose = true;
       index++;
       continue;
     }
 
-    // If it starts with dash but isn't recognized, it's an error
-    // (only if we haven't found a command yet)
     if (current.startsWith('-')) {
       throw _UsageException(
         'Unknown global option: $current\n'
@@ -560,24 +522,21 @@ _ParsedArgs _parseArguments(List<String> arguments) {
       );
     }
 
-    // This must be the command - stop parsing global options
     command = current;
     index++;
     break;
   }
 
-  // Phase 2: Everything remaining goes to the command (no parsing)
   while (index < arguments.length) {
     commandArgs.add(arguments[index]);
     index++;
   }
 
-  // Debug output if verbose was set
   if (verbose) {
     stderr.writeln(_gray('Parse phase complete:'));
     stderr.writeln(_gray('  Input args: $arguments'));
     stderr.writeln(_gray('  showHelp: $showHelp'));
-    stderr.writeln(_gray('  showVersion: $showVersion')); // Added
+    stderr.writeln(_gray('  showVersion: $showVersion'));
     stderr.writeln(_gray('  verbose: $verbose'));
     stderr.writeln(_gray('  command: $command'));
     stderr.writeln(_gray('  commandArgs: $commandArgs'));
@@ -585,13 +544,14 @@ _ParsedArgs _parseArguments(List<String> arguments) {
 
   return _ParsedArgs(
     showHelp: showHelp,
-    showVersion: showVersion, // Added
+    showVersion: showVersion,
     verbose: verbose,
     command: command,
     commandArgs: commandArgs,
   );
 }
 
+/// Runs Flutter with enhanced logging, reload handling, and device selection.
 class FlutterRunner {
   final List<String> forwardedArgs;
   final bool verbose;
@@ -614,7 +574,6 @@ class FlutterRunner {
 
     final deviceId = await _resolveDeviceId();
 
-    // Build flutter command
     final flutterArgs = ['run'];
 
     if (deviceId != null) {
@@ -630,28 +589,22 @@ class FlutterRunner {
 
     _process = await Process.start(_flutterCommand.executable, commandArgs);
 
-    // Handle stdout
     _process!.stdout
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(_handleFlutterOutput);
 
-    // Handle stderr
     _process!.stderr
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(_handleFlutterOutput);
 
-    // Setup keyboard input
     _setupKeyboardInput();
 
-    // Setup signal handler for Ctrl+C
     _setupSignalHandler();
 
-    // Setup file watcher
     _setupFileWatcher();
 
-    // Wait for process to exit
     final exitCode = await _process!.exitCode;
     await _cleanup();
     exit(exitCode);
@@ -660,10 +613,8 @@ class FlutterRunner {
   void _handleFlutterOutput(String line) {
     if (line.isEmpty) return;
 
-    // Print the line
     print(line);
 
-    // Check for VM Service URI
     final vmServiceMatch = RegExp(
       r'(?:VM\s+Service|Observatory|Dart\s+VM\s+Service).*?(http://[^\s]+)',
       caseSensitive: false,
@@ -677,7 +628,6 @@ class FlutterRunner {
       _connectToVmService(_vmServiceUri!);
     }
 
-    // Check if app started
     if (line.contains('Flutter run key commands') ||
         line.contains('An Observatory debugger') ||
         line.contains('A Dart VM Service')) {
@@ -695,7 +645,6 @@ class FlutterRunner {
       }
     }
 
-    // Check for hot reload/restart confirmations
     if (line.contains('Reloaded') || line.contains('reloaded')) {
       print(_green('✓ Hot reload complete'));
     }
@@ -788,7 +737,9 @@ class FlutterRunner {
           final decoded = json.decode(trimmed);
           devices.addAll(_extractDevices(decoded));
         } catch (_) {
-          // ignore malformed lines
+          if (verbose) {
+            stderr.writeln(_red('Skipping malformed device entry: $trimmed'));
+          }
         }
       }
       return devices;
