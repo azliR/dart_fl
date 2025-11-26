@@ -1,3 +1,9 @@
+## 0.5.0
+
+- Implemented automatic device selection and prompting when running `flutter run`.
+- Reverted `Process.start` command in `FlutterRunner` from `fvm flutter` to `flutter`.
+- Bumped version to 0.5.0.
+
 ## 0.4.0
 
 - Added `--version` flag to display the current version of the CLI.
