@@ -1,3 +1,10 @@
+## 0.7.2
+
+- Added comprehensive Dartdoc comments to improve code documentation and readability.
+- Simplified `analysis_options.yaml` by removing unnecessary comments.
+- Updated debug logging and error handling for device parsing.
+- Bumped version to 0.7.2.
+
 ## 0.7.1
 
 - Implemented SIGINT (Ctrl+C) signal handling for graceful shutdown of `fl` and its subprocesses.
