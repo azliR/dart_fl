@@ -1,3 +1,9 @@
+## 0.8.0
+
+- Implemented device filtering based on detected platform directories.
+- Updated `_version` constant in `bin/fl.dart` from `0.7.2` to `0.8.0`.
+- Updated `version` in `pubspec.yaml` from `0.7.2` to `0.8.0`.
+
 ## 0.7.2
 
 - Added comprehensive Dartdoc comments to improve code documentation and readability.
