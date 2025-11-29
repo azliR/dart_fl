@@ -14,7 +14,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.7.2';
+const String _version = '0.8.0';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -667,8 +667,12 @@ class FlutterRunner {
     final devices = await _fetchDevices();
     if (devices.isEmpty) return null;
 
-    if (devices.length == 1) {
-      final selected = devices.first;
+    final filter = _determineDirectoryPlatformFilter();
+    final filteredDevices = _filterDevicesByDirectory(devices, filter);
+    if (filteredDevices.isEmpty) return null;
+
+    if (filteredDevices.length == 1) {
+      final selected = filteredDevices.first;
       if (verbose) {
         print(
           _gray(
@@ -688,8 +692,8 @@ class FlutterRunner {
       exit(64);
     }
 
-    _printDeviceChoices(devices);
-    return _promptDeviceSelection(devices);
+    _printDeviceChoices(filteredDevices);
+    return _promptDeviceSelection(filteredDevices);
   }
 
   bool _hasDeviceIdFlag() {
@@ -720,6 +724,54 @@ class FlutterRunner {
       }
       return [];
     }
+  }
+
+  static const _platformDirectoryMap = {
+    'android': 'Android',
+    'ios': 'iOS',
+    'windows': 'Windows',
+    'linux': 'Linux',
+    'macos': 'macOS',
+    'web': 'Web',
+  };
+
+  _DirectoryPlatformFilter? _determineDirectoryPlatformFilter() {
+    final segments = <String>[];
+    final labels = <String>[];
+    for (final entry in _platformDirectoryMap.entries) {
+      if (Directory(entry.key).existsSync()) {
+        segments.add(entry.key);
+        labels.add(entry.value);
+      }
+    }
+    if (segments.isEmpty) return null;
+    return _DirectoryPlatformFilter._(segments, labels);
+  }
+
+  List<_FlutterDevice> _filterDevicesByDirectory(
+    List<_FlutterDevice> devices,
+    _DirectoryPlatformFilter? filter,
+  ) {
+    if (filter == null) return devices;
+    final filtered = devices.where(filter.matches).toList();
+    if (filtered.isEmpty) {
+      if (verbose) {
+        print(
+          _gray(
+            'No devices matched the detected ${filter.describe()} folder(s); showing all connected devices.',
+          ),
+        );
+      }
+      return devices;
+    }
+    if (verbose) {
+      print(
+        _gray(
+          'Filtering to ${filter.describe()} devices (${filtered.length} available).',
+        ),
+      );
+    }
+    return filtered;
   }
 
   List<_FlutterDevice> _parseDevicesFromOutput(String output) {
@@ -1105,6 +1157,34 @@ class FlutterRunner {
     _reloadDebounceTimer?.cancel();
     await _vmService?.dispose();
     _process?.kill();
+  }
+}
+
+class _DirectoryPlatformFilter {
+  final List<String> segments;
+  final List<String> labels;
+
+  const _DirectoryPlatformFilter._(this.segments, this.labels);
+
+  bool matches(_FlutterDevice device) {
+    final target = device.targetPlatform?.toLowerCase() ?? '';
+    final sdk = device.sdk?.toLowerCase() ?? '';
+    for (final segment in segments) {
+      if (target.contains(segment) || sdk.contains(segment)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String describe() {
+    if (labels.isEmpty) return 'detected platforms';
+    if (labels.length == 1) return labels.first;
+    if (labels.length == 2) {
+      return '${labels.first} and ${labels.last}';
+    }
+    final allExceptLast = labels.sublist(0, labels.length - 1).join(', ');
+    return '$allExceptLast, and ${labels.last}';
   }
 }
 
