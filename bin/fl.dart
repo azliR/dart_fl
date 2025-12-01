@@ -14,7 +14,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.8.0';
+const String _version = '0.9.0';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -109,7 +109,22 @@ void main(List<String> arguments) async {
 
   if (command == 'run') {
     if (verbose) print(_gray('Debug: Executing run command'));
-    final runner = FlutterRunner(forwardedArgs: commandArgs, verbose: verbose);
+    _RunCommandArgs runArgs;
+    try {
+      runArgs = _extractRunCommandArgs(commandArgs);
+    } on _UsageException catch (error) {
+      stderr.writeln(_red(error.message));
+      stderr.writeln('');
+      _printUsage();
+      exitCode = 64;
+      return;
+    }
+
+    final runner = FlutterRunner(
+      forwardedArgs: runArgs.cleanedArgs,
+      platformOverride: runArgs.platformOverride,
+      verbose: verbose,
+    );
     await runner.run();
     return;
   }
@@ -404,6 +419,79 @@ class _Dependency {
   _Dependency(this.name, this.lines);
 }
 
+const Map<String, String> _platformDirectoryMap = {
+  'android': 'Android',
+  'ios': 'iOS',
+  'windows': 'Windows',
+  'linux': 'Linux',
+  'macos': 'macOS',
+  'web': 'Web',
+};
+
+class _RunCommandArgs {
+  final List<String> cleanedArgs;
+  final String? platformOverride;
+
+  const _RunCommandArgs({required this.cleanedArgs, this.platformOverride});
+}
+
+_RunCommandArgs _extractRunCommandArgs(List<String> args) {
+  final cleanedArgs = <String>[];
+  String? platformOverride;
+  var sawDoubleDash = false;
+
+  for (var index = 0; index < args.length; index++) {
+    final current = args[index];
+
+    if (current == '--') {
+      sawDoubleDash = true;
+      cleanedArgs.add(current);
+      continue;
+    }
+
+    if (!sawDoubleDash && current == '--platform') {
+      if (platformOverride != null) {
+        throw _UsageException('Multiple --platform arguments are not allowed.');
+      }
+      if (index + 1 >= args.length) {
+        throw _UsageException('Expected a platform name after --platform.');
+      }
+      platformOverride = _normalizePlatformValue(args[++index]);
+      continue;
+    }
+
+    if (!sawDoubleDash && current.startsWith('--platform=')) {
+      if (platformOverride != null) {
+        throw _UsageException('Multiple --platform arguments are not allowed.');
+      }
+      final value = current.substring('--platform='.length);
+      platformOverride = _normalizePlatformValue(value);
+      continue;
+    }
+
+    cleanedArgs.add(current);
+  }
+
+  return _RunCommandArgs(
+    cleanedArgs: cleanedArgs,
+    platformOverride: platformOverride,
+  );
+}
+
+String _normalizePlatformValue(String rawInput) {
+  final normalized = rawInput.trim().toLowerCase();
+  if (normalized.isEmpty) {
+    throw _UsageException('Expected a platform name after --platform.');
+  }
+  if (!_platformDirectoryMap.containsKey(normalized)) {
+    throw _UsageException(
+      'Unknown platform: $rawInput.\n'
+      'Supported platforms: ${_platformDirectoryMap.keys.join(', ')}.',
+    );
+  }
+  return normalized;
+}
+
 /// Prints CLI usage information.
 void _printUsage() {
   print('fl - Enhanced Flutter CLI');
@@ -417,6 +505,10 @@ void _printUsage() {
   print('');
   print('Commands:');
   print('  run [flutter args]    Launch Flutter with auto reload/log capture');
+  print(
+    '      --platform <name>   Restrict device selection to one platform '
+    '(android, ios, linux, macos, windows, web)',
+  );
   print('  pub <subcommand>      Pub-related utilities');
   print(
     '  flutter <flutter args>  Pass through any command to the Flutter CLI',
@@ -431,6 +523,9 @@ void _printUsage() {
   print('  fl run --help                   # Show Flutter run help');
   print('  fl run --target lib/main_dev.dart   # Run specific target');
   print('  fl run --flavor development --debug   # Run with flavor');
+  print(
+    '  fl run --platform ios              # Limit selection to iOS devices',
+  );
   print('  fl -v run --target lib/main.dart    # Verbose mode');
   print('  fl pub sort                       # Sort pubspec.yaml dependencies');
   print('  fl --help                       # Show this message');
@@ -555,6 +650,7 @@ _ParsedArgs _parseArguments(List<String> arguments) {
 class FlutterRunner {
   final List<String> forwardedArgs;
   final bool verbose;
+  final String? platformOverride;
 
   Process? _process;
   VmService? _vmService;
@@ -566,8 +662,11 @@ class FlutterRunner {
   StreamSubscription<ProcessSignal>? _sigintSubscription;
   bool _cleanupInProgress = false;
 
-  FlutterRunner({List<String>? forwardedArgs, this.verbose = false})
-    : forwardedArgs = forwardedArgs ?? const [];
+  FlutterRunner({
+    List<String>? forwardedArgs,
+    this.platformOverride,
+    this.verbose = false,
+  }) : forwardedArgs = forwardedArgs ?? const [];
 
   Future<void> run() async {
     print(_cyan('🚀 Starting Flutter with enhanced features...'));
@@ -667,7 +766,7 @@ class FlutterRunner {
     final devices = await _fetchDevices();
     if (devices.isEmpty) return null;
 
-    final filter = _determineDirectoryPlatformFilter();
+    final filter = _determinePlatformFilter();
     final filteredDevices = _filterDevicesByDirectory(devices, filter);
     if (filteredDevices.isEmpty) return null;
 
@@ -726,14 +825,14 @@ class FlutterRunner {
     }
   }
 
-  static const _platformDirectoryMap = {
-    'android': 'Android',
-    'ios': 'iOS',
-    'windows': 'Windows',
-    'linux': 'Linux',
-    'macos': 'macOS',
-    'web': 'Web',
-  };
+  _DirectoryPlatformFilter? _determinePlatformFilter() {
+    if (platformOverride != null) {
+      final label =
+          _platformDirectoryMap[platformOverride!] ?? platformOverride!;
+      return _DirectoryPlatformFilter._([platformOverride!], [label]);
+    }
+    return _determineDirectoryPlatformFilter();
+  }
 
   _DirectoryPlatformFilter? _determineDirectoryPlatformFilter() {
     final segments = <String>[];
@@ -758,7 +857,7 @@ class FlutterRunner {
       if (verbose) {
         print(
           _gray(
-            'No devices matched the detected ${filter.describe()} folder(s); showing all connected devices.',
+            'No devices matched the requested ${filter.describe()} platform(s); showing all connected devices.',
           ),
         );
       }
