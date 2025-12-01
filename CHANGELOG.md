@@ -1,3 +1,9 @@
+## 0.9.0
+
+- Added `--platform` argument to the `run` command to restrict device selection to a specific platform.
+- Updated `_version` constant in `bin/fl.dart` from `0.8.0` to `0.9.0`.
+- Updated `version` in `pubspec.yaml` from `0.8.0` to `0.9.0`.
+
 ## 0.8.0
 
 - Implemented device filtering based on detected platform directories.
