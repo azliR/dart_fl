@@ -15,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.10.0';
+const String _version = '0.10.1';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -1097,53 +1097,44 @@ class FlutterRunner {
     print('');
   }
 
-  Future<String?> _promptDeviceSelection(
-    _DeviceSelectionContext selection,
-  ) async {
-    final lineIterator = StreamIterator<String>(
-      stdin.transform(utf8.decoder).transform(const LineSplitter()),
-    );
-    try {
-      while (true) {
-        stdout.write('Please choose one (or "q" to quit): ');
-        final hasLine = await lineIterator.moveNext();
-        if (!hasLine) return null;
-        final trimmed = lineIterator.current.trim();
-        if (trimmed.isEmpty) continue;
-        if (trimmed.toLowerCase() == 'q') {
-          print(_cyan('\n👋 Quitting...'));
-          exit(0);
-        }
-
-        final index = int.tryParse(trimmed);
-        if (index != null) {
-          if (selection.containsIndex(index)) {
-            return selection.deviceForIndex(index)!.id;
-          }
-          if (selection.isMissingIndex(index)) {
-            print(
-              _red(
-                'Device $index is no longer available; please choose another device.',
-              ),
-            );
-            continue;
-          }
-        }
-
-        final candidate = trimmed.toLowerCase();
-        final match = selection.matchByNameOrId(candidate);
-        if (match != null) {
-          return match.id;
-        }
-
-        print(
-          _red(
-            'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
-          ),
-        );
+  String? _promptDeviceSelection(_DeviceSelectionContext selection) {
+    while (true) {
+      stdout.write('Please choose one (or "q" to quit): ');
+      final input = stdin.readLineSync();
+      if (input == null) return null;
+      final trimmed = input.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.toLowerCase() == 'q') {
+        print(_cyan('\n👋 Quitting...'));
+        exit(0);
       }
-    } finally {
-      await lineIterator.cancel();
+
+      final index = int.tryParse(trimmed);
+      if (index != null) {
+        if (selection.containsIndex(index)) {
+          return selection.deviceForIndex(index)!.id;
+        }
+        if (selection.isMissingIndex(index)) {
+          print(
+            _red(
+              'Device $index is no longer available; please choose another device.',
+            ),
+          );
+          continue;
+        }
+      }
+
+      final candidate = trimmed.toLowerCase();
+      final match = selection.matchByNameOrId(candidate);
+      if (match != null) {
+        return match.id;
+      }
+
+      print(
+        _red(
+          'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
+        ),
+      );
     }
   }
 
