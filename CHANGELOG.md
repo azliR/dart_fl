@@ -1,3 +1,9 @@
+## 0.10.0
+
+- Implemented device caching to speed up device selection.
+- Improved device selection logic with dynamic refreshing and better handling of missing devices.
+- Refactored device selection context and session management.
+
 ## 0.9.0
 
 - Added `--platform` argument to the `run` command to restrict device selection to a specific platform.

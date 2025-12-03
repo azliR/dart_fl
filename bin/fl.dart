@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.9.0';
+const String _version = '0.10.0';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -57,6 +58,54 @@ class _FlutterCommand {
 String _describeFlutterCommand(List<String> commandArgs) {
   if (commandArgs.isEmpty) return _flutterCommand.executable;
   return '${_flutterCommand.executable} ${commandArgs.join(' ')}';
+}
+
+final Directory? _deviceCacheDirectory = _resolveDeviceCacheDirectory();
+final File? _deviceCacheFile = _resolveDeviceCacheFile();
+
+Directory? _resolveDeviceCacheDirectory() {
+  final basePath = _resolveDeviceCacheBasePath();
+  if (basePath == null || basePath.isEmpty) return null;
+  final directory = Directory(basePath);
+  try {
+    if (!directory.existsSync()) {
+      directory.createSync(recursive: true);
+    }
+    return directory;
+  } catch (_) {
+    return null;
+  }
+}
+
+File? _resolveDeviceCacheFile() {
+  final directory = _deviceCacheDirectory ?? _resolveDeviceCacheDirectory();
+  if (directory == null) return null;
+  return File(path.join(directory.path, 'device-cache.json'));
+}
+
+String? _resolveDeviceCacheBasePath() {
+  final override = Platform.environment['FL_DEVICE_CACHE_DIR'];
+  if (override != null && override.isNotEmpty) return override;
+
+  if (Platform.isWindows) {
+    final userProfile = Platform.environment['USERPROFILE'];
+    if (userProfile != null && userProfile.isNotEmpty) {
+      return path.join(userProfile, '.fl');
+    }
+    return null;
+  }
+
+  final xdg = Platform.environment['XDG_CACHE_HOME'];
+  if (xdg != null && xdg.isNotEmpty) {
+    return path.join(xdg, 'fl');
+  }
+
+  final home = Platform.environment['HOME'];
+  if (home != null && home.isNotEmpty) {
+    return path.join(home, '.cache', 'fl');
+  }
+
+  return null;
 }
 
 /// Entry point for the CLI.
@@ -661,6 +710,8 @@ class FlutterRunner {
   String? _vmServiceUri;
   StreamSubscription<ProcessSignal>? _sigintSubscription;
   bool _cleanupInProgress = false;
+  List<_FlutterDevice>? _deviceCache;
+  bool _deviceCacheLoaded = false;
 
   FlutterRunner({
     List<String>? forwardedArgs,
@@ -763,15 +814,32 @@ class FlutterRunner {
       return null;
     }
 
-    final devices = await _fetchDevices();
-    if (devices.isEmpty) return null;
-
     final filter = _determinePlatformFilter();
-    final filteredDevices = _filterDevicesByDirectory(devices, filter);
-    if (filteredDevices.isEmpty) return null;
+    await _loadCachedDevices();
 
-    if (filteredDevices.length == 1) {
-      final selected = filteredDevices.first;
+    var usingCachedDevices = false;
+    List<_FlutterDevice> devicesForPrompt = [];
+
+    if (_deviceCache != null && _deviceCache!.isNotEmpty) {
+      final cachedFiltered = _filterDevicesByDirectory(_deviceCache!, filter);
+      if (cachedFiltered.isNotEmpty) {
+        devicesForPrompt = cachedFiltered;
+        usingCachedDevices = true;
+      }
+    }
+
+    if (!usingCachedDevices) {
+      final fetchedDevices = await _fetchDevices();
+      if (fetchedDevices.isEmpty) return null;
+      _deviceCache = fetchedDevices;
+      await _saveDeviceCache(fetchedDevices);
+      final filtered = _filterDevicesByDirectory(fetchedDevices, filter);
+      if (filtered.isEmpty) return null;
+      devicesForPrompt = filtered;
+    }
+
+    if (devicesForPrompt.length == 1) {
+      final selected = devicesForPrompt.first;
       if (verbose) {
         print(
           _gray(
@@ -791,8 +859,18 @@ class FlutterRunner {
       exit(64);
     }
 
-    _printDeviceChoices(filteredDevices);
-    return _promptDeviceSelection(filteredDevices);
+    final selection = _DeviceSelectionContext();
+    selection.initialize(devicesForPrompt);
+    _printDeviceChoicesFromSelection(selection);
+
+    final session = _SelectionSession();
+    if (usingCachedDevices) {
+      unawaited(_refreshDevicesWhileSelecting(filter, selection, session));
+    }
+
+    final selectedId = await _promptDeviceSelection(selection);
+    session.deactivate();
+    return selectedId;
   }
 
   bool _hasDeviceIdFlag() {
@@ -822,6 +900,64 @@ class FlutterRunner {
         stderr.writeln(_red('Failed to list devices: $error'));
       }
       return [];
+    }
+  }
+
+  Future<void> _loadCachedDevices() async {
+    if (_deviceCacheLoaded) return;
+    _deviceCacheLoaded = true;
+    final file = _deviceCacheFile;
+    if (file == null) return;
+    try {
+      if (!await file.exists()) return;
+      final content = await file.readAsString();
+      final decoded = json.decode(content);
+      final cachedDevices = _extractDevices(decoded);
+      if (cachedDevices.isNotEmpty) {
+        _deviceCache = cachedDevices;
+      }
+    } catch (error) {
+      if (verbose) {
+        stderr.writeln(_red('Failed to load device cache: $error'));
+      }
+    }
+  }
+
+  Future<void> _saveDeviceCache(List<_FlutterDevice> devices) async {
+    final file = _deviceCacheFile;
+    if (file == null) return;
+    final payload = json.encode(
+      devices.map((device) => device.toJson()).toList(),
+    );
+    try {
+      await file.writeAsString(payload);
+    } catch (error) {
+      if (verbose) {
+        stderr.writeln(_red('Failed to write device cache: $error'));
+      }
+    }
+  }
+
+  Future<void> _refreshDevicesWhileSelecting(
+    _DirectoryPlatformFilter? filter,
+    _DeviceSelectionContext selection,
+    _SelectionSession session,
+  ) async {
+    try {
+      final devices = await _fetchDevices();
+      if (devices.isEmpty) return;
+      _deviceCache = devices;
+      await _saveDeviceCache(devices);
+      final filtered = _filterDevicesByDirectory(devices, filter);
+      final changes = selection.refresh(filtered);
+      if (!session.isActive || !changes.hasChanges) return;
+      print('');
+      print(_yellow('Device list updated:'));
+      _printDeviceChoicesFromSelection(selection);
+    } catch (error) {
+      if (verbose) {
+        stderr.writeln(_red('Failed to refresh devices: $error'));
+      }
     }
   }
 
@@ -946,55 +1082,68 @@ class FlutterRunner {
     return devices;
   }
 
-  void _printDeviceChoices(List<_FlutterDevice> devices) {
+  void _printDeviceChoicesFromSelection(_DeviceSelectionContext selection) {
     print('');
     print('Connected devices:');
-    for (var index = 0; index < devices.length; index++) {
-      final device = devices[index];
+    for (final entry in selection.entries()) {
+      final device = entry.value;
       final platform = device.targetPlatform ?? 'unknown';
       final sdk = device.sdk;
       final sdkSuffix = sdk != null && sdk.isNotEmpty ? ' • $sdk' : '';
       print(
-        '[${index + 1}]: ${device.name} (${device.id}) • $platform$sdkSuffix',
+        '[${entry.key}]: ${device.name} (${device.id}) • $platform$sdkSuffix',
       );
     }
     print('');
   }
 
-  String? _promptDeviceSelection(List<_FlutterDevice> devices) {
-    while (true) {
-      stdout.write('Please choose one (or "q" to quit): ');
-      final input = stdin.readLineSync();
-      if (input == null) return null;
-      final trimmed = input.trim();
-      if (trimmed.isEmpty) continue;
-      if (trimmed.toLowerCase() == 'q') {
-        print(_cyan('\n👋 Quitting...'));
-        exit(0);
-      }
+  Future<String?> _promptDeviceSelection(
+    _DeviceSelectionContext selection,
+  ) async {
+    final lineIterator = StreamIterator<String>(
+      stdin.transform(utf8.decoder).transform(const LineSplitter()),
+    );
+    try {
+      while (true) {
+        stdout.write('Please choose one (or "q" to quit): ');
+        final hasLine = await lineIterator.moveNext();
+        if (!hasLine) return null;
+        final trimmed = lineIterator.current.trim();
+        if (trimmed.isEmpty) continue;
+        if (trimmed.toLowerCase() == 'q') {
+          print(_cyan('\n👋 Quitting...'));
+          exit(0);
+        }
 
-      final index = int.tryParse(trimmed);
-      if (index != null && index >= 1 && index <= devices.length) {
-        return devices[index - 1].id;
-      }
+        final index = int.tryParse(trimmed);
+        if (index != null) {
+          if (selection.containsIndex(index)) {
+            return selection.deviceForIndex(index)!.id;
+          }
+          if (selection.isMissingIndex(index)) {
+            print(
+              _red(
+                'Device $index is no longer available; please choose another device.',
+              ),
+            );
+            continue;
+          }
+        }
 
-      final match =
-          devices
-              .where(
-                (device) =>
-                    device.id.toLowerCase() == trimmed.toLowerCase() ||
-                    device.name.toLowerCase() == trimmed.toLowerCase(),
-              )
-              .toList();
-      if (match.isNotEmpty) {
-        return match.first.id;
-      }
+        final candidate = trimmed.toLowerCase();
+        final match = selection.matchByNameOrId(candidate);
+        if (match != null) {
+          return match.id;
+        }
 
-      print(
-        _red(
-          'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
-        ),
-      );
+        print(
+          _red(
+            'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
+          ),
+        );
+      }
+    } finally {
+      await lineIterator.cancel();
     }
   }
 
@@ -1259,6 +1408,100 @@ class FlutterRunner {
   }
 }
 
+class _SelectionSession {
+  bool _active = true;
+
+  bool get isActive => _active;
+
+  void deactivate() {
+    _active = false;
+  }
+}
+
+class _DeviceSelectionChanges {
+  final List<int> removedIndexes;
+  final List<_FlutterDevice> addedDevices;
+
+  const _DeviceSelectionChanges({
+    required this.removedIndexes,
+    required this.addedDevices,
+  });
+
+  bool get hasChanges => removedIndexes.isNotEmpty || addedDevices.isNotEmpty;
+}
+
+class _DeviceSelectionContext {
+  final LinkedHashMap<int, _FlutterDevice> _slots = LinkedHashMap();
+  final Map<String, int> _indexById = {};
+  final Set<int> _missingIndexes = <int>{};
+  int _nextIndex = 1;
+
+  void initialize(List<_FlutterDevice> devices) {
+    _slots.clear();
+    _indexById.clear();
+    _missingIndexes.clear();
+    _nextIndex = 1;
+    for (final device in devices) {
+      _slots[_nextIndex] = device;
+      _indexById[device.id] = _nextIndex;
+      _nextIndex++;
+    }
+  }
+
+  Iterable<MapEntry<int, _FlutterDevice>> entries() => _slots.entries;
+
+  bool containsIndex(int index) => _slots.containsKey(index);
+
+  _FlutterDevice? deviceForIndex(int index) => _slots[index];
+
+  bool isMissingIndex(int index) => _missingIndexes.contains(index);
+
+  _FlutterDevice? matchByNameOrId(String candidate) {
+    for (final device in _slots.values) {
+      if (device.id.toLowerCase() == candidate ||
+          device.name.toLowerCase() == candidate) {
+        return device;
+      }
+    }
+    return null;
+  }
+
+  _DeviceSelectionChanges refresh(List<_FlutterDevice> newDevices) {
+    final removed = <int>[];
+    final added = <_FlutterDevice>[];
+    final newIds = <String>{};
+    for (final device in newDevices) {
+      newIds.add(device.id);
+    }
+
+    final existingIds = _indexById.keys.toSet();
+    final removedIds = existingIds.difference(newIds);
+    for (final id in removedIds) {
+      final index = _indexById.remove(id)!;
+      _slots.remove(index);
+      _missingIndexes.add(index);
+      removed.add(index);
+    }
+
+    for (final device in newDevices) {
+      final existingIndex = _indexById[device.id];
+      if (existingIndex != null) {
+        _slots[existingIndex] = device;
+      } else {
+        _slots[_nextIndex] = device;
+        _indexById[device.id] = _nextIndex;
+        added.add(device);
+        _nextIndex++;
+      }
+    }
+
+    return _DeviceSelectionChanges(
+      removedIndexes: removed,
+      addedDevices: added,
+    );
+  }
+}
+
 class _DirectoryPlatformFilter {
   final List<String> segments;
   final List<String> labels;
@@ -1299,4 +1542,13 @@ class _FlutterDevice {
     this.targetPlatform,
     this.sdk,
   });
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': id,
+      'name': name,
+      'targetPlatform': targetPlatform,
+      'sdk': sdk,
+    };
+  }
 }
