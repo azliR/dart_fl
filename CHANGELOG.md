@@ -1,3 +1,7 @@
+## 0.10.1
+
+- fix(cli): Replaced `StreamIterator` with `stdin.readLineSync` for device selection to prevent potential issues with stdin buffering.
+
 ## 0.10.0
 
 - Implemented device caching to speed up device selection.
