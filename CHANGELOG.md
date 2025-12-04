@@ -1,3 +1,8 @@
+## 0.10.2
+
+- fix(cli): Gracefully quit FlutterRunner when 'q' or 'Q' is pressed.
+- chore: Bump version to 0.10.2.
+
 ## 0.10.1
 
 - fix(cli): Replaced `StreamIterator` with `stdin.readLineSync` for device selection to prevent potential issues with stdin buffering.
