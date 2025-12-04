@@ -15,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.10.1';
+const String _version = '0.10.2';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -1290,8 +1290,12 @@ class FlutterRunner {
 
       if (char == 'q' || char == 'Q') {
         print(_cyan('\n👋 Quitting...'));
-        _cleanup();
-        exit(0);
+        if (_process != null) {
+          _process!.stdin.write('q');
+        } else {
+          _cleanup().then((_) => exit(0));
+        }
+        return;
       }
 
       if (char == 'h' || char == 'H') {
