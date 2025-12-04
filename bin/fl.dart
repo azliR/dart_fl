@@ -15,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.10.2';
+const String _version = '0.11.0';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -825,17 +825,17 @@ class FlutterRunner {
       if (cachedFiltered.isNotEmpty) {
         devicesForPrompt = cachedFiltered;
         usingCachedDevices = true;
+        print(_gray('Using cached device list (press "r" to refresh).'));
       }
     }
 
     if (!usingCachedDevices) {
       final fetchedDevices = await _fetchDevices();
-      if (fetchedDevices.isEmpty) return null;
-      _deviceCache = fetchedDevices;
-      await _saveDeviceCache(fetchedDevices);
-      final filtered = _filterDevicesByDirectory(fetchedDevices, filter);
-      if (filtered.isEmpty) return null;
-      devicesForPrompt = filtered;
+      if (fetchedDevices.isNotEmpty) {
+        _deviceCache = fetchedDevices;
+        await _saveDeviceCache(fetchedDevices);
+      }
+      devicesForPrompt = _filterDevicesByDirectory(fetchedDevices, filter);
     }
 
     if (devicesForPrompt.length == 1) {
@@ -864,11 +864,12 @@ class FlutterRunner {
     _printDeviceChoicesFromSelection(selection);
 
     final session = _SelectionSession();
-    if (usingCachedDevices) {
-      unawaited(_refreshDevicesWhileSelecting(filter, selection, session));
-    }
-
-    final selectedId = await _promptDeviceSelection(selection);
+    final selectedId = await _promptDeviceSelection(
+      selection,
+      filter: filter,
+      session: session,
+      startedFromCache: usingCachedDevices,
+    );
     session.deactivate();
     return selectedId;
   }
@@ -938,19 +939,29 @@ class FlutterRunner {
     }
   }
 
-  Future<void> _refreshDevicesWhileSelecting(
+  Future<void> _refreshDevicesOnce({
     _DirectoryPlatformFilter? filter,
-    _DeviceSelectionContext selection,
-    _SelectionSession session,
-  ) async {
+    required _DeviceSelectionContext selection,
+    required bool startedFromCache,
+    required _SelectionSession session,
+  }) async {
     try {
       final devices = await _fetchDevices();
-      if (devices.isEmpty) return;
+      if (devices.isEmpty) {
+        print(_yellow('No devices detected on refresh.'));
+        return;
+      }
       _deviceCache = devices;
       await _saveDeviceCache(devices);
       final filtered = _filterDevicesByDirectory(devices, filter);
       final changes = selection.refresh(filtered);
-      if (!session.isActive || !changes.hasChanges) return;
+      if (!session.isActive || !changes.hasChanges) {
+        if (!startedFromCache) {
+          print(_gray('Device list is unchanged.'));
+        }
+        return;
+      }
+
       print('');
       print(_yellow('Device list updated:'));
       _printDeviceChoicesFromSelection(selection);
@@ -989,22 +1000,20 @@ class FlutterRunner {
   ) {
     if (filter == null) return devices;
     final filtered = devices.where(filter.matches).toList();
-    if (filtered.isEmpty) {
-      if (verbose) {
+    if (verbose) {
+      if (filtered.isEmpty) {
         print(
           _gray(
-            'No devices matched the requested ${filter.describe()} platform(s); showing all connected devices.',
+            'No devices matched the requested ${filter.describe()} platform(s).',
+          ),
+        );
+      } else {
+        print(
+          _gray(
+            'Filtering to ${filter.describe()} devices (${filtered.length} available).',
           ),
         );
       }
-      return devices;
-    }
-    if (verbose) {
-      print(
-        _gray(
-          'Filtering to ${filter.describe()} devices (${filtered.length} available).',
-        ),
-      );
     }
     return filtered;
   }
@@ -1097,44 +1106,92 @@ class FlutterRunner {
     print('');
   }
 
-  String? _promptDeviceSelection(_DeviceSelectionContext selection) {
-    while (true) {
-      stdout.write('Please choose one (or "q" to quit): ');
-      final input = stdin.readLineSync();
-      if (input == null) return null;
-      final trimmed = input.trim();
-      if (trimmed.isEmpty) continue;
-      if (trimmed.toLowerCase() == 'q') {
-        print(_cyan('\n👋 Quitting...'));
-        exit(0);
-      }
+  Future<String?> _promptDeviceSelection(
+    _DeviceSelectionContext selection, {
+    _DirectoryPlatformFilter? filter,
+    required _SelectionSession session,
+    required bool startedFromCache,
+  }) async {
+    final useSingleKey = stdin.hasTerminal;
+    final originalLineMode = stdin.lineMode;
+    final originalEchoMode = stdin.echoMode;
 
-      final index = int.tryParse(trimmed);
-      if (index != null) {
-        if (selection.containsIndex(index)) {
-          return selection.deviceForIndex(index)!.id;
+    if (useSingleKey) {
+      stdin.lineMode = false;
+      stdin.echoMode = false;
+    }
+
+    try {
+      while (true) {
+        stdout.write('Please choose one (or "q" to quit, "r" to refresh): ');
+
+        String? input;
+        if (useSingleKey) {
+          try {
+            final byte = stdin.readByteSync();
+            if (byte == null) continue;
+            final char = String.fromCharCode(byte);
+            if (char == '\n' || char == '\r') continue;
+            input = char;
+          } catch (_) {
+            continue;
+          }
+        } else {
+          input = stdin.readLineSync();
         }
-        if (selection.isMissingIndex(index)) {
-          print(
-            _red(
-              'Device $index is no longer available; please choose another device.',
-            ),
+
+        if (input == null) return null;
+        final trimmed = input.trim();
+        if (trimmed.isEmpty) continue;
+
+        final lower = trimmed.toLowerCase();
+        if (lower == 'q') {
+          print(_cyan('\n👋 Quitting...'));
+          exit(0);
+        }
+        if (lower == 'r') {
+          print(_cyan('\nRefreshing device list...'));
+          await _refreshDevicesOnce(
+            filter: filter,
+            selection: selection,
+            startedFromCache: startedFromCache,
+            session: session,
           );
           continue;
         }
-      }
 
-      final candidate = trimmed.toLowerCase();
-      final match = selection.matchByNameOrId(candidate);
-      if (match != null) {
-        return match.id;
-      }
+        final index = int.tryParse(trimmed);
+        if (index != null) {
+          if (selection.containsIndex(index)) {
+            return selection.deviceForIndex(index)!.id;
+          }
+          if (selection.isMissingIndex(index)) {
+            print(
+              _red(
+                'Device $index is no longer available; please choose another device.',
+              ),
+            );
+            continue;
+          }
+        }
 
-      print(
-        _red(
-          'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
-        ),
-      );
+        final candidate = trimmed.toLowerCase();
+        final match = selection.matchByNameOrId(candidate);
+        if (match != null) {
+          return match.id;
+        }
+
+        print(
+          _red(
+            'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
+          ),
+        );
+      }
+    } finally {
+      if (useSingleKey) {
+        stdin.lineMode = originalLineMode;
+        stdin.echoMode = originalEchoMode;
+      }
     }
   }
 
