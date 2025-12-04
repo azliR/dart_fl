@@ -1,3 +1,8 @@
+## 0.11.0
+
+- feat(cli): Improve device selection with refresh and single-key input.
+- chore: Bump version to 0.11.0.
+
 ## 0.10.2
 
 - fix(cli): Gracefully quit FlutterRunner when 'q' or 'Q' is pressed.
