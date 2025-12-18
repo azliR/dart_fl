@@ -1,12 +1,15 @@
+## 0.12.0
+
+- feat(cli): Added `--force-device-refresh` flag to bypass device cache and fetch fresh devices.
+- fix(cli): Added missing newline after device selection prompt to prevent output from appearing on the same line.
+
 ## 0.11.0
 
 - feat(cli): Improve device selection with refresh and single-key input.
-- chore: Bump version to 0.11.0.
 
 ## 0.10.2
 
 - fix(cli): Gracefully quit FlutterRunner when 'q' or 'Q' is pressed.
-- chore: Bump version to 0.10.2.
 
 ## 0.10.1
 

@@ -15,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.11.0';
+const String _version = '0.12.0';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -173,6 +173,7 @@ void main(List<String> arguments) async {
       forwardedArgs: runArgs.cleanedArgs,
       platformOverride: runArgs.platformOverride,
       verbose: verbose,
+      forceDeviceRefresh: runArgs.forceDeviceRefresh,
     );
     await runner.run();
     return;
@@ -480,14 +481,20 @@ const Map<String, String> _platformDirectoryMap = {
 class _RunCommandArgs {
   final List<String> cleanedArgs;
   final String? platformOverride;
+  final bool forceDeviceRefresh;
 
-  const _RunCommandArgs({required this.cleanedArgs, this.platformOverride});
+  const _RunCommandArgs({
+    required this.cleanedArgs,
+    this.platformOverride,
+    this.forceDeviceRefresh = false,
+  });
 }
 
 _RunCommandArgs _extractRunCommandArgs(List<String> args) {
   final cleanedArgs = <String>[];
   String? platformOverride;
   var sawDoubleDash = false;
+  var forceDeviceRefresh = false;
 
   for (var index = 0; index < args.length; index++) {
     final current = args[index];
@@ -495,6 +502,11 @@ _RunCommandArgs _extractRunCommandArgs(List<String> args) {
     if (current == '--') {
       sawDoubleDash = true;
       cleanedArgs.add(current);
+      continue;
+    }
+
+    if (!sawDoubleDash && current == '--force-device-refresh') {
+      forceDeviceRefresh = true;
       continue;
     }
 
@@ -524,6 +536,7 @@ _RunCommandArgs _extractRunCommandArgs(List<String> args) {
   return _RunCommandArgs(
     cleanedArgs: cleanedArgs,
     platformOverride: platformOverride,
+    forceDeviceRefresh: forceDeviceRefresh,
   );
 }
 
@@ -558,6 +571,9 @@ void _printUsage() {
     '      --platform <name>   Restrict device selection to one platform '
     '(android, ios, linux, macos, windows, web)',
   );
+  print(
+    '      --force-device-refresh   Bypass device cache and fetch fresh devices',
+  );
   print('  pub <subcommand>      Pub-related utilities');
   print(
     '  flutter <flutter args>  Pass through any command to the Flutter CLI',
@@ -575,6 +591,7 @@ void _printUsage() {
   print(
     '  fl run --platform ios              # Limit selection to iOS devices',
   );
+  print('  fl run --force-device-refresh    # Refresh device list');
   print('  fl -v run --target lib/main.dart    # Verbose mode');
   print('  fl pub sort                       # Sort pubspec.yaml dependencies');
   print('  fl --help                       # Show this message');
@@ -700,6 +717,7 @@ class FlutterRunner {
   final List<String> forwardedArgs;
   final bool verbose;
   final String? platformOverride;
+  final bool forceDeviceRefresh;
 
   Process? _process;
   VmService? _vmService;
@@ -717,6 +735,7 @@ class FlutterRunner {
     List<String>? forwardedArgs,
     this.platformOverride,
     this.verbose = false,
+    this.forceDeviceRefresh = false,
   }) : forwardedArgs = forwardedArgs ?? const [];
 
   Future<void> run() async {
@@ -815,17 +834,20 @@ class FlutterRunner {
     }
 
     final filter = _determinePlatformFilter();
-    await _loadCachedDevices();
 
     var usingCachedDevices = false;
     List<_FlutterDevice> devicesForPrompt = [];
 
-    if (_deviceCache != null && _deviceCache!.isNotEmpty) {
-      final cachedFiltered = _filterDevicesByDirectory(_deviceCache!, filter);
-      if (cachedFiltered.isNotEmpty) {
-        devicesForPrompt = cachedFiltered;
-        usingCachedDevices = true;
-        print(_gray('Using cached device list (press "r" to refresh).'));
+    if (!forceDeviceRefresh) {
+      await _loadCachedDevices();
+
+      if (_deviceCache != null && _deviceCache!.isNotEmpty) {
+        final cachedFiltered = _filterDevicesByDirectory(_deviceCache!, filter);
+        if (cachedFiltered.isNotEmpty) {
+          devicesForPrompt = cachedFiltered;
+          usingCachedDevices = true;
+          print(_gray('Using cached device list (press "r" to refresh).'));
+        }
       }
     }
 
@@ -1129,7 +1151,7 @@ class FlutterRunner {
         if (useSingleKey) {
           try {
             final byte = stdin.readByteSync();
-            if (byte == null) continue;
+            if (byte == -1) continue; // EOF
             final char = String.fromCharCode(byte);
             if (char == '\n' || char == '\r') continue;
             input = char;
@@ -1163,12 +1185,13 @@ class FlutterRunner {
         final index = int.tryParse(trimmed);
         if (index != null) {
           if (selection.containsIndex(index)) {
+            print('');
             return selection.deviceForIndex(index)!.id;
           }
           if (selection.isMissingIndex(index)) {
             print(
               _red(
-                'Device $index is no longer available; please choose another device.',
+                '\nDevice $index is no longer available; please choose another device.',
               ),
             );
             continue;
@@ -1178,12 +1201,13 @@ class FlutterRunner {
         final candidate = trimmed.toLowerCase();
         final match = selection.matchByNameOrId(candidate);
         if (match != null) {
+          print('');
           return match.id;
         }
 
         print(
           _red(
-            'Invalid selection. Enter a device number or its name/ID, or "q" to quit.',
+            '\nInvalid selection. Enter a device number or its name/ID, or "q" to quit.',
           ),
         );
       }
