@@ -1,3 +1,8 @@
+## 0.13.0
+
+- feat(cli): Added `device` command with `refresh` and `list` subcommands.
+- refactor(cli): Extracted device management logic to top-level functions for reuse.
+
 ## 0.12.0
 
 - feat(cli): Added `--force-device-refresh` flag to bypass device cache and fetch fresh devices.

@@ -15,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.12.0';
+const String _version = '0.13.0';
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -197,6 +197,12 @@ void main(List<String> arguments) async {
     return;
   }
 
+  if (command == 'device') {
+    if (verbose) print(_gray('Debug: Executing device command'));
+    await _handleDeviceCommand(commandArgs, verbose);
+    return;
+  }
+
   stderr.writeln(_red('Unknown command: $command'));
   stderr.writeln('');
   _printUsage();
@@ -251,6 +257,86 @@ Future<void> _handlePubCommand(List<String> args, bool verbose) async {
     '  sort [options]    Sort dependencies in pubspec.yaml alphabetically',
   );
   exitCode = 64;
+}
+
+/// Handles `fl device` subcommands.
+Future<void> _handleDeviceCommand(List<String> args, bool verbose) async {
+  if (args.isEmpty) {
+    stderr.writeln(_red('No device subcommand specified'));
+    stderr.writeln('');
+    stderr.writeln('Available subcommands:');
+    stderr.writeln('  refresh           Refresh the device cache');
+    stderr.writeln(
+      '  list [options]    List devices (use --force-device-refresh to refresh)',
+    );
+    exitCode = 64;
+    return;
+  }
+
+  final subcommand = args.first;
+
+  if (subcommand == 'refresh') {
+    print(_cyan('Refreshing device cache...'));
+    final devices = await _fetchDevices(verbose: verbose);
+    if (devices.isNotEmpty) {
+      await _saveDeviceCache(devices, verbose: verbose);
+      print(_green('✓ Device cache updated with ${devices.length} devices.'));
+      for (final device in devices) {
+        print('  • ${device.name} (${device.id})');
+      }
+    } else {
+      print(_yellow('No devices found.'));
+    }
+    return;
+  }
+
+  if (subcommand == 'list') {
+    var forceRefresh = false;
+    for (var i = 1; i < args.length; i++) {
+      if (args[i] == '--force-device-refresh') {
+        forceRefresh = true;
+      }
+    }
+
+    if (forceRefresh) {
+      print(_cyan('Refreshing device cache...'));
+      final devices = await _fetchDevices(verbose: verbose);
+      if (devices.isNotEmpty) {
+        await _saveDeviceCache(devices, verbose: verbose);
+      }
+      _printDevices(devices);
+      return;
+    }
+
+    final cachedDevices = await _loadCachedDevices(verbose: verbose);
+    if (cachedDevices != null && cachedDevices.isNotEmpty) {
+      _printDevices(cachedDevices);
+    } else {
+      print(_yellow('No cached devices found.'));
+      print(
+        _gray(
+          'Run "fl device refresh" or "fl device list --force-device-refresh" to update.',
+        ),
+      );
+    }
+    return;
+  }
+
+  stderr.writeln(_red('Unknown device subcommand: $subcommand'));
+  exitCode = 64;
+}
+
+void _printDevices(List<_FlutterDevice> devices) {
+  if (devices.isEmpty) {
+    print(_yellow('No devices available.'));
+    return;
+  }
+  print(_green('Available devices:'));
+  for (final device in devices) {
+    print(
+      '  • ${device.name} (${device.id}) - ${device.targetPlatform} ${device.sdk ?? ''}',
+    );
+  }
 }
 
 /// Forwards arguments directly to the Flutter executable.
@@ -578,6 +664,11 @@ void _printUsage() {
   print(
     '  flutter <flutter args>  Pass through any command to the Flutter CLI',
   );
+  print('  device <subcommand>   Device management commands');
+  print('    refresh           Manually refresh the device cache');
+  print(
+    '    list              List devices from cache (supports --force-device-refresh)',
+  );
   print(
     '    sort              Sort dependencies in pubspec.yaml alphabetically',
   );
@@ -594,6 +685,9 @@ void _printUsage() {
   print('  fl run --force-device-refresh    # Refresh device list');
   print('  fl -v run --target lib/main.dart    # Verbose mode');
   print('  fl pub sort                       # Sort pubspec.yaml dependencies');
+  print('  fl device refresh                 # Refresh device cache');
+  print('  fl device list                    # List cached devices');
+  print('  fl device list --force-device-refresh # Refresh and list devices');
   print('  fl --help                       # Show this message');
   print('  fl --version                    # Show version');
   print('  fl flutter doctor             # Run Flutter CLI commands directly');
@@ -729,7 +823,6 @@ class FlutterRunner {
   StreamSubscription<ProcessSignal>? _sigintSubscription;
   bool _cleanupInProgress = false;
   List<_FlutterDevice>? _deviceCache;
-  bool _deviceCacheLoaded = false;
 
   FlutterRunner({
     List<String>? forwardedArgs,
@@ -839,9 +932,9 @@ class FlutterRunner {
     List<_FlutterDevice> devicesForPrompt = [];
 
     if (!forceDeviceRefresh) {
-      await _loadCachedDevices();
-
-      if (_deviceCache != null && _deviceCache!.isNotEmpty) {
+      final cached = await _loadCachedDevices(verbose: verbose);
+      if (cached != null && cached.isNotEmpty) {
+        _deviceCache = cached;
         final cachedFiltered = _filterDevicesByDirectory(_deviceCache!, filter);
         if (cachedFiltered.isNotEmpty) {
           devicesForPrompt = cachedFiltered;
@@ -852,10 +945,10 @@ class FlutterRunner {
     }
 
     if (!usingCachedDevices) {
-      final fetchedDevices = await _fetchDevices();
+      final fetchedDevices = await _fetchDevices(verbose: verbose);
       if (fetchedDevices.isNotEmpty) {
         _deviceCache = fetchedDevices;
-        await _saveDeviceCache(fetchedDevices);
+        await _saveDeviceCache(fetchedDevices, verbose: verbose);
       }
       devicesForPrompt = _filterDevicesByDirectory(fetchedDevices, filter);
     }
@@ -905,62 +998,6 @@ class FlutterRunner {
     return false;
   }
 
-  Future<List<_FlutterDevice>> _fetchDevices() async {
-    try {
-      final commandArgs = _flutterCommand.withArgs(['devices', '--machine']);
-      final result = await Process.run(_flutterCommand.executable, commandArgs);
-      if (result.exitCode != 0) {
-        if (verbose) {
-          stderr.writeln(_red('Failed to list devices: ${result.stderr}'));
-        }
-        return [];
-      }
-
-      final output = (result.stdout as String).trim();
-      return _parseDevicesFromOutput(output);
-    } catch (error) {
-      if (verbose) {
-        stderr.writeln(_red('Failed to list devices: $error'));
-      }
-      return [];
-    }
-  }
-
-  Future<void> _loadCachedDevices() async {
-    if (_deviceCacheLoaded) return;
-    _deviceCacheLoaded = true;
-    final file = _deviceCacheFile;
-    if (file == null) return;
-    try {
-      if (!await file.exists()) return;
-      final content = await file.readAsString();
-      final decoded = json.decode(content);
-      final cachedDevices = _extractDevices(decoded);
-      if (cachedDevices.isNotEmpty) {
-        _deviceCache = cachedDevices;
-      }
-    } catch (error) {
-      if (verbose) {
-        stderr.writeln(_red('Failed to load device cache: $error'));
-      }
-    }
-  }
-
-  Future<void> _saveDeviceCache(List<_FlutterDevice> devices) async {
-    final file = _deviceCacheFile;
-    if (file == null) return;
-    final payload = json.encode(
-      devices.map((device) => device.toJson()).toList(),
-    );
-    try {
-      await file.writeAsString(payload);
-    } catch (error) {
-      if (verbose) {
-        stderr.writeln(_red('Failed to write device cache: $error'));
-      }
-    }
-  }
-
   Future<void> _refreshDevicesOnce({
     _DirectoryPlatformFilter? filter,
     required _DeviceSelectionContext selection,
@@ -968,13 +1005,13 @@ class FlutterRunner {
     required _SelectionSession session,
   }) async {
     try {
-      final devices = await _fetchDevices();
+      final devices = await _fetchDevices(verbose: verbose);
       if (devices.isEmpty) {
         print(_yellow('No devices detected on refresh.'));
         return;
       }
       _deviceCache = devices;
-      await _saveDeviceCache(devices);
+      await _saveDeviceCache(devices, verbose: verbose);
       final filtered = _filterDevicesByDirectory(devices, filter);
       final changes = selection.refresh(filtered);
       if (!session.isActive || !changes.hasChanges) {
@@ -1038,79 +1075,6 @@ class FlutterRunner {
       }
     }
     return filtered;
-  }
-
-  List<_FlutterDevice> _parseDevicesFromOutput(String output) {
-    if (output.isEmpty) return <_FlutterDevice>[];
-
-    try {
-      final decoded = json.decode(output);
-      return _extractDevices(decoded);
-    } catch (_) {
-      final devices = <_FlutterDevice>[];
-      for (final line in const LineSplitter().convert(output)) {
-        final trimmed = line.trim();
-        if (trimmed.isEmpty) continue;
-        try {
-          final decoded = json.decode(trimmed);
-          devices.addAll(_extractDevices(decoded));
-        } catch (_) {
-          if (verbose) {
-            stderr.writeln(_red('Skipping malformed device entry: $trimmed'));
-          }
-        }
-      }
-      return devices;
-    }
-  }
-
-  List<_FlutterDevice> _extractDevices(dynamic decoded) {
-    final devices = <_FlutterDevice>[];
-
-    void addFromMap(Map<String, dynamic> deviceJson) {
-      final id = deviceJson['id']?.toString();
-      final name = deviceJson['name']?.toString();
-      if (id == null || name == null) return;
-      final targetPlatform = deviceJson['targetPlatform']?.toString();
-      final sdk = deviceJson['sdk']?.toString();
-      devices.add(
-        _FlutterDevice(
-          id: id,
-          name: name,
-          targetPlatform: targetPlatform,
-          sdk: sdk,
-        ),
-      );
-    }
-
-    if (decoded is List) {
-      for (final entry in decoded) {
-        if (entry is Map<String, dynamic>) {
-          addFromMap(entry);
-        }
-      }
-      return devices;
-    }
-
-    if (decoded is Map<String, dynamic>) {
-      if (decoded['devices'] is List) {
-        for (final entry in decoded['devices']) {
-          if (entry is Map<String, dynamic>) {
-            addFromMap(entry);
-          }
-        }
-        return devices;
-      }
-
-      if (decoded['device'] is Map<String, dynamic>) {
-        addFromMap(decoded['device'] as Map<String, dynamic>);
-        return devices;
-      }
-
-      addFromMap(decoded);
-    }
-
-    return devices;
   }
 
   void _printDeviceChoicesFromSelection(_DeviceSelectionContext selection) {
@@ -1482,6 +1446,137 @@ class FlutterRunner {
     await _vmService?.dispose();
     _process?.kill();
   }
+}
+
+Future<List<_FlutterDevice>> _fetchDevices({bool verbose = false}) async {
+  try {
+    final commandArgs = _flutterCommand.withArgs(['devices', '--machine']);
+    final result = await Process.run(_flutterCommand.executable, commandArgs);
+    if (result.exitCode != 0) {
+      if (verbose) {
+        stderr.writeln(_red('Failed to list devices: ${result.stderr}'));
+      }
+      return [];
+    }
+
+    final output = (result.stdout as String).trim();
+    return _parseDevicesFromOutput(output, verbose: verbose);
+  } catch (error) {
+    if (verbose) {
+      stderr.writeln(_red('Failed to list devices: $error'));
+    }
+    return [];
+  }
+}
+
+Future<List<_FlutterDevice>?> _loadCachedDevices({bool verbose = false}) async {
+  final file = _deviceCacheFile;
+  if (file == null) return null;
+  try {
+    if (!await file.exists()) return null;
+    final content = await file.readAsString();
+    final decoded = json.decode(content);
+    return _extractDevices(decoded);
+  } catch (error) {
+    if (verbose) {
+      stderr.writeln(_red('Failed to load device cache: $error'));
+    }
+    return null;
+  }
+}
+
+Future<void> _saveDeviceCache(
+  List<_FlutterDevice> devices, {
+  bool verbose = false,
+}) async {
+  final file = _deviceCacheFile;
+  if (file == null) return;
+  final payload = json.encode(
+    devices.map((device) => device.toJson()).toList(),
+  );
+  try {
+    await file.writeAsString(payload);
+  } catch (error) {
+    if (verbose) {
+      stderr.writeln(_red('Failed to write device cache: $error'));
+    }
+  }
+}
+
+List<_FlutterDevice> _parseDevicesFromOutput(
+  String output, {
+  bool verbose = false,
+}) {
+  if (output.isEmpty) return <_FlutterDevice>[];
+
+  try {
+    final decoded = json.decode(output);
+    return _extractDevices(decoded);
+  } catch (_) {
+    final devices = <_FlutterDevice>[];
+    for (final line in const LineSplitter().convert(output)) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      try {
+        final decoded = json.decode(trimmed);
+        devices.addAll(_extractDevices(decoded));
+      } catch (_) {
+        if (verbose) {
+          stderr.writeln(_red('Skipping malformed device entry: $trimmed'));
+        }
+      }
+    }
+    return devices;
+  }
+}
+
+List<_FlutterDevice> _extractDevices(dynamic decoded) {
+  final devices = <_FlutterDevice>[];
+
+  void addFromMap(Map<String, dynamic> deviceJson) {
+    final id = deviceJson['id']?.toString();
+    final name = deviceJson['name']?.toString();
+    if (id == null || name == null) return;
+    final targetPlatform = deviceJson['targetPlatform']?.toString();
+    final sdk = deviceJson['sdk']?.toString();
+    devices.add(
+      _FlutterDevice(
+        id: id,
+        name: name,
+        targetPlatform: targetPlatform,
+        sdk: sdk,
+      ),
+    );
+  }
+
+  if (decoded is List) {
+    for (final entry in decoded) {
+      if (entry is Map<String, dynamic>) {
+        addFromMap(entry);
+      }
+    }
+    return devices;
+  }
+
+  if (decoded is Map<String, dynamic>) {
+    if (decoded['devices'] is List) {
+      for (final entry in decoded['devices']) {
+        if (entry is Map<String, dynamic>) {
+          addFromMap(entry);
+        }
+      }
+      return devices;
+    }
+
+    if (decoded['device'] is Map<String, dynamic>) {
+      addFromMap(decoded['device'] as Map<String, dynamic>);
+      return devices;
+    }
+
+    addFromMap(decoded);
+  }
+
+  return devices;
 }
 
 class _SelectionSession {
