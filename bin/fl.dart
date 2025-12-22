@@ -15,7 +15,10 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.13.0';
+const String _version = '0.14.0';
+
+/// Duration after which the device cache is considered stale.
+const Duration _cacheExpiration = Duration(hours: 12);
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -940,11 +943,17 @@ class FlutterRunner {
           devicesForPrompt = cachedFiltered;
           usingCachedDevices = true;
           print(_gray('Using cached device list (press "r" to refresh).'));
+        } else {
+          // No devices matched the filter from cache, auto-refresh
+          if (verbose) {
+            print(_gray('No matching devices in cache. Auto-refreshing...'));
+          }
         }
       }
     }
 
     if (!usingCachedDevices) {
+      print(_gray('Fetching device list...'));
       final fetchedDevices = await _fetchDevices(verbose: verbose);
       if (fetchedDevices.isNotEmpty) {
         _deviceCache = fetchedDevices;
@@ -1474,6 +1483,19 @@ Future<List<_FlutterDevice>?> _loadCachedDevices({bool verbose = false}) async {
   if (file == null) return null;
   try {
     if (!await file.exists()) return null;
+
+    // Check if cache is older than expiration duration
+    final stat = await file.stat();
+    final age = DateTime.now().difference(stat.modified);
+    if (age > _cacheExpiration) {
+      if (verbose) {
+        print(
+          _gray('Device cache expired (age: ${age.inHours}h). Refreshing...'),
+        );
+      }
+      return null;
+    }
+
     final content = await file.readAsString();
     final decoded = json.decode(content);
     return _extractDevices(decoded);

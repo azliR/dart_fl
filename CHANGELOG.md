@@ -1,3 +1,8 @@
+## 0.14.0
+
+- feat(cli): Device cache now auto-expires after 12 hours, ensuring stale device lists are automatically refreshed.
+- feat(cli): Auto-refresh devices when cache is expired or returns no matching devices for the platform filter.
+
 ## 0.13.0
 
 - feat(cli): Added `device` command with `refresh` and `list` subcommands.
