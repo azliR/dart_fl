@@ -1,9 +1,14 @@
+## 0.15.0
+
+- **breaking(cli)**: Device picker now always shows, even with single device (use `-y` to auto-select first device)
+- feat(cli): Added `-y` / `--yes` flag to auto-select the first ranked device
+- feat(cli): Devices are now ranked by usage count, most frequently picked devices appear first
+- feat(cli): Added `fl device rm <device-id>` to manually remove devices from cache
+- feat(cli): Enter key now selects the first device in the picker
+- feat(cli): Devices persist across refreshes (no longer replaced on refresh)
+- feat(cli): Devices auto-removed after 30 days of not being picked
+
 ## 0.14.0
-
-- feat(cli): Device cache now auto-expires after 12 hours, ensuring stale device lists are automatically refreshed.
-- feat(cli): Auto-refresh devices when cache is expired or returns no matching devices for the platform filter.
-
-## 0.13.0
 
 - feat(cli): Added `device` command with `refresh` and `list` subcommands.
 - refactor(cli): Extracted device management logic to top-level functions for reuse.

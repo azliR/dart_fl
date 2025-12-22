@@ -15,10 +15,10 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.14.0';
+const String _version = '0.15.0';
 
-/// Duration after which the device cache is considered stale.
-const Duration _cacheExpiration = Duration(hours: 12);
+/// Duration after which unpicked devices are removed from cache.
+const Duration _staleDeviceDuration = Duration(days: 30);
 
 final _flutterCommand = _resolveFlutterCommand();
 
@@ -177,6 +177,7 @@ void main(List<String> arguments) async {
       platformOverride: runArgs.platformOverride,
       verbose: verbose,
       forceDeviceRefresh: runArgs.forceDeviceRefresh,
+      autoYes: runArgs.autoYes,
     );
     await runner.run();
     return;
@@ -272,6 +273,7 @@ Future<void> _handleDeviceCommand(List<String> args, bool verbose) async {
     stderr.writeln(
       '  list [options]    List devices (use --force-device-refresh to refresh)',
     );
+    stderr.writeln('  rm <device-id>    Remove a device from the cache');
     exitCode = 64;
     return;
   }
@@ -321,6 +323,24 @@ Future<void> _handleDeviceCommand(List<String> args, bool verbose) async {
           'Run "fl device refresh" or "fl device list --force-device-refresh" to update.',
         ),
       );
+    }
+    return;
+  }
+
+  if (subcommand == 'rm') {
+    if (args.length < 2) {
+      stderr.writeln(_red('No device ID specified'));
+      stderr.writeln(_gray('Usage: fl device rm <device-id>'));
+      exitCode = 64;
+      return;
+    }
+
+    final deviceId = args[1];
+    final removed = await _removeDeviceFromCache(deviceId, verbose: verbose);
+    if (removed) {
+      print(_green('✓ Device $deviceId removed from cache.'));
+    } else {
+      print(_yellow('Device $deviceId not found in cache.'));
     }
     return;
   }
@@ -571,11 +591,13 @@ class _RunCommandArgs {
   final List<String> cleanedArgs;
   final String? platformOverride;
   final bool forceDeviceRefresh;
+  final bool autoYes;
 
   const _RunCommandArgs({
     required this.cleanedArgs,
     this.platformOverride,
     this.forceDeviceRefresh = false,
+    this.autoYes = false,
   });
 }
 
@@ -584,6 +606,7 @@ _RunCommandArgs _extractRunCommandArgs(List<String> args) {
   String? platformOverride;
   var sawDoubleDash = false;
   var forceDeviceRefresh = false;
+  var autoYes = false;
 
   for (var index = 0; index < args.length; index++) {
     final current = args[index];
@@ -596,6 +619,11 @@ _RunCommandArgs _extractRunCommandArgs(List<String> args) {
 
     if (!sawDoubleDash && current == '--force-device-refresh') {
       forceDeviceRefresh = true;
+      continue;
+    }
+
+    if (!sawDoubleDash && (current == '-y' || current == '--yes')) {
+      autoYes = true;
       continue;
     }
 
@@ -626,6 +654,7 @@ _RunCommandArgs _extractRunCommandArgs(List<String> args) {
     cleanedArgs: cleanedArgs,
     platformOverride: platformOverride,
     forceDeviceRefresh: forceDeviceRefresh,
+    autoYes: autoYes,
   );
 }
 
@@ -663,6 +692,7 @@ void _printUsage() {
   print(
     '      --force-device-refresh   Bypass device cache and fetch fresh devices',
   );
+  print('      -y, --yes            Auto-select the first device');
   print('  pub <subcommand>      Pub-related utilities');
   print(
     '  flutter <flutter args>  Pass through any command to the Flutter CLI',
@@ -672,9 +702,7 @@ void _printUsage() {
   print(
     '    list              List devices from cache (supports --force-device-refresh)',
   );
-  print(
-    '    sort              Sort dependencies in pubspec.yaml alphabetically',
-  );
+  print('    rm <device-id>    Remove a device from the cache');
   print('  help                Show this message');
   print('');
   print('Examples:');
@@ -815,6 +843,7 @@ class FlutterRunner {
   final bool verbose;
   final String? platformOverride;
   final bool forceDeviceRefresh;
+  final bool autoYes;
 
   Process? _process;
   VmService? _vmService;
@@ -825,13 +854,13 @@ class FlutterRunner {
   String? _vmServiceUri;
   StreamSubscription<ProcessSignal>? _sigintSubscription;
   bool _cleanupInProgress = false;
-  List<_FlutterDevice>? _deviceCache;
 
   FlutterRunner({
     List<String>? forwardedArgs,
     this.platformOverride,
     this.verbose = false,
     this.forceDeviceRefresh = false,
+    this.autoYes = false,
   }) : forwardedArgs = forwardedArgs ?? const [];
 
   Future<void> run() async {
@@ -931,53 +960,61 @@ class FlutterRunner {
 
     final filter = _determinePlatformFilter();
 
-    var usingCachedDevices = false;
-    List<_FlutterDevice> devicesForPrompt = [];
+    // Load device records for ranking
+    var records = await _loadDeviceRecords(verbose: verbose) ?? {};
+    var usingCachedDevices = records.isNotEmpty;
 
-    if (!forceDeviceRefresh) {
-      final cached = await _loadCachedDevices(verbose: verbose);
-      if (cached != null && cached.isNotEmpty) {
-        _deviceCache = cached;
-        final cachedFiltered = _filterDevicesByDirectory(_deviceCache!, filter);
-        if (cachedFiltered.isNotEmpty) {
-          devicesForPrompt = cachedFiltered;
-          usingCachedDevices = true;
-          print(_gray('Using cached device list (press "r" to refresh).'));
-        } else {
-          // No devices matched the filter from cache, auto-refresh
-          if (verbose) {
-            print(_gray('No matching devices in cache. Auto-refreshing...'));
-          }
-        }
-      }
+    if (!forceDeviceRefresh && usingCachedDevices) {
+      print(_gray('Using cached device list (press "r" to refresh).'));
     }
 
-    if (!usingCachedDevices) {
+    if (forceDeviceRefresh || !usingCachedDevices) {
       print(_gray('Fetching device list...'));
       final fetchedDevices = await _fetchDevices(verbose: verbose);
       if (fetchedDevices.isNotEmpty) {
-        _deviceCache = fetchedDevices;
-        await _saveDeviceCache(fetchedDevices, verbose: verbose);
+        records = await _mergeDevicesIntoRecords(
+          fetchedDevices,
+          verbose: verbose,
+        );
+        await _saveDeviceRecords(records, verbose: verbose);
+        usingCachedDevices = false;
       }
-      devicesForPrompt = _filterDevicesByDirectory(fetchedDevices, filter);
     }
 
-    if (devicesForPrompt.length == 1) {
+    // Filter and rank devices
+    var rankedRecords = records.values.toList();
+    if (filter != null) {
+      rankedRecords =
+          rankedRecords.where((r) => filter.matches(r.device)).toList();
+    }
+
+    // Sort by pickCount descending (most used first)
+    rankedRecords.sort((a, b) => b.pickCount.compareTo(a.pickCount));
+
+    final devicesForPrompt = rankedRecords.map((r) => r.device).toList();
+
+    if (devicesForPrompt.isEmpty) {
+      stderr.writeln(_red('No devices available.'));
+      stderr.writeln(
+        _gray('Run "fl device refresh" to update the device cache.'),
+      );
+      exit(64);
+    }
+
+    // If autoYes is set, pick the first device automatically
+    if (autoYes) {
       final selected = devicesForPrompt.first;
-      if (verbose) {
-        print(
-          _gray(
-            'Single device detected (${selected.name} / ${selected.id}); using it automatically.',
-          ),
-        );
-      }
+      print(
+        _gray('Auto-selecting first device: ${selected.name} (${selected.id})'),
+      );
+      await _incrementDevicePick(selected.id, verbose: verbose);
       return selected.id;
     }
 
     if (!stdin.hasTerminal) {
       stderr.writeln(
         _red(
-          'Multiple devices connected but stdin is not a terminal; specify a device with -d <deviceId>.',
+          'stdin is not a terminal; specify a device with -d <deviceId> or use -y to auto-select.',
         ),
       );
       exit(64);
@@ -995,6 +1032,12 @@ class FlutterRunner {
       startedFromCache: usingCachedDevices,
     );
     session.deactivate();
+
+    // Increment pick count for selected device
+    if (selectedId != null) {
+      await _incrementDevicePick(selectedId, verbose: verbose);
+    }
+
     return selectedId;
   }
 
@@ -1019,7 +1062,6 @@ class FlutterRunner {
         print(_yellow('No devices detected on refresh.'));
         return;
       }
-      _deviceCache = devices;
       await _saveDeviceCache(devices, verbose: verbose);
       final filtered = _filterDevicesByDirectory(devices, filter);
       final changes = selection.refresh(filtered);
@@ -1118,7 +1160,7 @@ class FlutterRunner {
 
     try {
       while (true) {
-        stdout.write('Please choose one (or "q" to quit, "r" to refresh): ');
+        stdout.write('Please choose one (Enter=1, "q"=quit, "r"=refresh): ');
 
         String? input;
         if (useSingleKey) {
@@ -1126,7 +1168,14 @@ class FlutterRunner {
             final byte = stdin.readByteSync();
             if (byte == -1) continue; // EOF
             final char = String.fromCharCode(byte);
-            if (char == '\n' || char == '\r') continue;
+            // Enter key selects first device
+            if (char == '\n' || char == '\r') {
+              if (selection.containsIndex(1)) {
+                print('');
+                return selection.deviceForIndex(1)!.id;
+              }
+              continue;
+            }
             input = char;
           } catch (_) {
             continue;
@@ -1137,7 +1186,14 @@ class FlutterRunner {
 
         if (input == null) return null;
         final trimmed = input.trim();
-        if (trimmed.isEmpty) continue;
+        // Empty input (Enter in line mode) selects first device
+        if (trimmed.isEmpty) {
+          if (selection.containsIndex(1)) {
+            print('');
+            return selection.deviceForIndex(1)!.id;
+          }
+          continue;
+        }
 
         final lower = trimmed.toLowerCase();
         if (lower == 'q') {
@@ -1478,27 +1534,50 @@ Future<List<_FlutterDevice>> _fetchDevices({bool verbose = false}) async {
   }
 }
 
-Future<List<_FlutterDevice>?> _loadCachedDevices({bool verbose = false}) async {
+Future<Map<String, _DeviceRecord>?> _loadDeviceRecords({
+  bool verbose = false,
+}) async {
   final file = _deviceCacheFile;
   if (file == null) return null;
   try {
     if (!await file.exists()) return null;
 
-    // Check if cache is older than expiration duration
-    final stat = await file.stat();
-    final age = DateTime.now().difference(stat.modified);
-    if (age > _cacheExpiration) {
-      if (verbose) {
-        print(
-          _gray('Device cache expired (age: ${age.inHours}h). Refreshing...'),
-        );
-      }
-      return null;
-    }
-
     final content = await file.readAsString();
     final decoded = json.decode(content);
-    return _extractDevices(decoded);
+    if (decoded is! Map<String, dynamic>) return null;
+
+    final devicesData = decoded['devices'];
+    if (devicesData is! Map<String, dynamic>) return null;
+
+    final records = <String, _DeviceRecord>{};
+    final now = DateTime.now();
+
+    for (final entry in devicesData.entries) {
+      if (entry.value is! Map<String, dynamic>) continue;
+      final record = _DeviceRecord.fromJson(
+        entry.value as Map<String, dynamic>,
+      );
+      if (record == null) continue;
+
+      // Prune devices not picked for 30 days
+      if (record.lastPickedAt != null) {
+        final age = now.difference(record.lastPickedAt!);
+        if (age > _staleDeviceDuration) {
+          if (verbose) {
+            print(
+              _gray(
+                'Removing stale device: ${record.device.name} (not picked for ${age.inDays} days)',
+              ),
+            );
+          }
+          continue;
+        }
+      }
+
+      records[entry.key] = record;
+    }
+
+    return records;
   } catch (error) {
     if (verbose) {
       stderr.writeln(_red('Failed to load device cache: $error'));
@@ -1507,15 +1586,19 @@ Future<List<_FlutterDevice>?> _loadCachedDevices({bool verbose = false}) async {
   }
 }
 
-Future<void> _saveDeviceCache(
-  List<_FlutterDevice> devices, {
+Future<void> _saveDeviceRecords(
+  Map<String, _DeviceRecord> records, {
   bool verbose = false,
 }) async {
   final file = _deviceCacheFile;
   if (file == null) return;
-  final payload = json.encode(
-    devices.map((device) => device.toJson()).toList(),
-  );
+
+  final devicesJson = <String, dynamic>{};
+  for (final entry in records.entries) {
+    devicesJson[entry.key] = entry.value.toJson();
+  }
+
+  final payload = json.encode({'devices': devicesJson});
   try {
     await file.writeAsString(payload);
   } catch (error) {
@@ -1523,6 +1606,88 @@ Future<void> _saveDeviceCache(
       stderr.writeln(_red('Failed to write device cache: $error'));
     }
   }
+}
+
+/// Merges fetched devices into existing records, preserving pick counts.
+Future<Map<String, _DeviceRecord>> _mergeDevicesIntoRecords(
+  List<_FlutterDevice> fetchedDevices, {
+  bool verbose = false,
+}) async {
+  final existing = await _loadDeviceRecords(verbose: verbose) ?? {};
+  final now = DateTime.now();
+
+  for (final device in fetchedDevices) {
+    if (existing.containsKey(device.id)) {
+      // Update device info but preserve pick count and lastPickedAt
+      final old = existing[device.id]!;
+      existing[device.id] = _DeviceRecord(
+        device: device,
+        pickCount: old.pickCount,
+        lastPickedAt: old.lastPickedAt,
+        lastSeenAt: now,
+      );
+    } else {
+      // New device
+      existing[device.id] = _DeviceRecord(
+        device: device,
+        pickCount: 0,
+        lastPickedAt: null,
+        lastSeenAt: now,
+      );
+    }
+  }
+
+  return existing;
+}
+
+/// Increments the pick count for a device and saves the cache.
+Future<void> _incrementDevicePick(
+  String deviceId, {
+  bool verbose = false,
+}) async {
+  final records = await _loadDeviceRecords(verbose: verbose) ?? {};
+  final now = DateTime.now();
+
+  if (records.containsKey(deviceId)) {
+    final old = records[deviceId]!;
+    records[deviceId] = _DeviceRecord(
+      device: old.device,
+      pickCount: old.pickCount + 1,
+      lastPickedAt: now,
+      lastSeenAt: old.lastSeenAt,
+    );
+    await _saveDeviceRecords(records, verbose: verbose);
+  }
+}
+
+/// Removes a device from the cache.
+Future<bool> _removeDeviceFromCache(
+  String deviceId, {
+  bool verbose = false,
+}) async {
+  final records = await _loadDeviceRecords(verbose: verbose) ?? {};
+  if (records.containsKey(deviceId)) {
+    records.remove(deviceId);
+    await _saveDeviceRecords(records, verbose: verbose);
+    return true;
+  }
+  return false;
+}
+
+/// Legacy wrapper for compatibility - returns list of devices from records.
+Future<List<_FlutterDevice>?> _loadCachedDevices({bool verbose = false}) async {
+  final records = await _loadDeviceRecords(verbose: verbose);
+  if (records == null || records.isEmpty) return null;
+  return records.values.map((r) => r.device).toList();
+}
+
+/// Legacy wrapper for compatibility - saves devices as records.
+Future<void> _saveDeviceCache(
+  List<_FlutterDevice> devices, {
+  bool verbose = false,
+}) async {
+  final records = await _mergeDevicesIntoRecords(devices, verbose: verbose);
+  await _saveDeviceRecords(records, verbose: verbose);
 }
 
 List<_FlutterDevice> _parseDevicesFromOutput(
@@ -1742,6 +1907,59 @@ class _FlutterDevice {
       'name': name,
       'targetPlatform': targetPlatform,
       'sdk': sdk,
+    };
+  }
+}
+
+/// Tracks device usage stats for ranking and staleness checks.
+class _DeviceRecord {
+  final _FlutterDevice device;
+  final int pickCount;
+  final DateTime? lastPickedAt;
+  final DateTime? lastSeenAt;
+
+  const _DeviceRecord({
+    required this.device,
+    required this.pickCount,
+    this.lastPickedAt,
+    this.lastSeenAt,
+  });
+
+  static _DeviceRecord? fromJson(Map<String, dynamic> json) {
+    final id = json['id']?.toString();
+    final name = json['name']?.toString();
+    if (id == null || name == null) return null;
+
+    final device = _FlutterDevice(
+      id: id,
+      name: name,
+      targetPlatform: json['targetPlatform']?.toString(),
+      sdk: json['sdk']?.toString(),
+    );
+
+    return _DeviceRecord(
+      device: device,
+      pickCount: (json['pickCount'] as num?)?.toInt() ?? 0,
+      lastPickedAt:
+          json['lastPickedAt'] != null
+              ? DateTime.tryParse(json['lastPickedAt'].toString())
+              : null,
+      lastSeenAt:
+          json['lastSeenAt'] != null
+              ? DateTime.tryParse(json['lastSeenAt'].toString())
+              : null,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'id': device.id,
+      'name': device.name,
+      'targetPlatform': device.targetPlatform,
+      'sdk': device.sdk,
+      'pickCount': pickCount,
+      'lastPickedAt': lastPickedAt?.toIso8601String(),
+      'lastSeenAt': lastSeenAt?.toIso8601String(),
     };
   }
 }
