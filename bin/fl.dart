@@ -15,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.15.0';
+const String _version = '0.15.1';
 
 /// Duration after which unpicked devices are removed from cache.
 const Duration _staleDeviceDuration = Duration(days: 30);

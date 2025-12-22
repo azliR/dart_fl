@@ -1,55 +1,137 @@
-# fl
+# fl 🚀
 
-`fl` is a lightweight companion for `flutter run` that adds auto hot-reload and
-brings `dart:developer` logs into your terminal without changing your workflow.
+A lightweight companion for `flutter run` that makes your life easier with auto hot-reload, `dart:developer` logs in your terminal, and smart device management that remembers your favorites.
 
-## Features
+## ✨ Features
 
-- Watches `lib/` and triggers hot reload automatically when `.dart` files change.
-- Streams `dart:developer` log output alongside `print` and native logs.
-- Mirrors `flutter run` options by forwarding every argument after `fl run`.
-- Keeps the familiar `r`, `R`, and `q` key bindings from the stock Flutter tool.
+### 🔥 Auto Reload & Logging
+- Watches `lib/` and hot reloads automatically when you save
+- Shows `dart:developer` logs right in your terminal
+- All `flutter run` options work — just pass them through!
+- Same `r`, `R`, `q` shortcuts you're used to
 
-## Installation
+### 📱 Smart Device Management
+- **Your favorites first** — Most used devices bubble to the top
+- **Remembers everything** — Devices stick around across refreshes
+- **Self-cleaning** — Unused devices auto-remove after 30 days
+- **Smart filtering** — Only shows devices matching your project
 
-Clone this repo:
+## 📦 Installation
+
+Clone it:
 
 ```sh
 git clone https://github.com/azliR/dart_fl.git
 ```
 
-Install the package:
+Install it:
 
 ```sh
 dart pub global activate --source path .
 ```
 
-Make sure `$HOME/.pub-cache/bin` (or the equivalent on your platform) is on
-your `PATH` so the `fl` executable is available everywhere.
+> 💡 Make sure `$HOME/.pub-cache/bin` is in your `PATH`!
 
-## Usage
+## 🎮 Usage
+
+### Running Your App
+
+Just run it — pick a device:
 
 ```sh
-# Show the CLI help
-fl
-
-# Run your app with all additional options passed through to flutter run
-fl run --flavor staging -d emulator-5554
-
-# Inspect the underlying flutter help
-fl run --help
+fl run
 ```
 
-During execution you can use:
+Skip the picker, grab the first one:
 
-- `r` for hot reload
-- `R` for hot restart
-- `q` to quit
-- `h` to show the in-app command list
+```sh
+fl run -y
+```
 
-## Troubleshooting
+Specify a device directly:
 
-- Ensure the Flutter SDK is available in your `PATH`; `fl` shells out to the
-  `flutter` executable.
-- Auto reload only watches the `lib/` directory. If your project keeps code
-  elsewhere, add symbolic links under `lib/` or trigger reload manually with `r`.
+```sh
+fl run -d iPhone
+```
+
+With flavor and target:
+
+```sh
+fl run --flavor staging --target lib/main_dev.dart
+```
+
+Only iOS devices please:
+
+```sh
+fl run --platform ios
+```
+
+### 🎯 Device Selection
+
+When picking a device:
+- **1-9** — Select by number
+- **Enter** — Grab the first one
+- **r** — Refresh the list
+- **q** — Quit
+
+### 🔧 Device Management
+
+See what's cached:
+
+```sh
+fl device list
+```
+
+Update the list:
+
+```sh
+fl device refresh
+```
+
+Remove a device:
+
+```sh
+fl device rm <device-id>
+```
+
+### 📋 Other Goodies
+
+Alphabetize your pubspec deps:
+
+```sh
+fl pub sort
+```
+
+Pass commands to Flutter:
+
+```sh
+fl flutter doctor
+```
+
+### ⚙️ Run Options
+
+| Option | What it does |
+|--------|--------------|
+| `-d <id>` | Pick a device |
+| `-y` | Auto-select first device |
+| `--platform <name>` | Filter by platform |
+| `--force-device-refresh` | Force a fresh list |
+
+## ⌨️ Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `r` | Hot reload |
+| `R` | Hot restart |
+| `q` | Quit |
+| `h` | Help |
+
+## 🔧 Troubleshooting
+
+- **Flutter not found?** Make sure it's in your `PATH`
+- **Missing a device?** Run `fl device refresh` or press `r` during selection
+- **Only watches `lib/`** — Use symlinks for code elsewhere, or just press `r`
+
+---
+
+Made with ☕ by [@azliR](https://github.com/azliR)

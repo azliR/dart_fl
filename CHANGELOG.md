@@ -1,3 +1,8 @@
+## 0.15.1
+
+- docs: Overhauled README.md with better structure, features list, and usage guide.
+- chore: Bump version to 0.15.1.
+
 ## 0.15.0
 
 - **breaking(cli)**: Device picker now always shows, even with single device (use `-y` to auto-select first device)
