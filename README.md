@@ -18,15 +18,11 @@ A lightweight companion for `flutter run` that makes your life easier with auto 
 
 ## 📦 Installation
 
-Clone it:
-
 ```sh
+# Clone it
 git clone https://github.com/azliR/dart_fl.git
-```
 
-Install it:
-
-```sh
+# Install it
 dart pub global activate --source path .
 ```
 
@@ -36,33 +32,20 @@ dart pub global activate --source path .
 
 ### Running Your App
 
-Just run it — pick a device:
-
 ```sh
+# Just run it — pick a device
 fl run
-```
 
-Skip the picker, grab the first one:
-
-```sh
+# Skip the picker, grab the first one
 fl run -y
-```
 
-Specify a device directly:
-
-```sh
+# Specify a device directly
 fl run -d iPhone
-```
 
-With flavor and target:
-
-```sh
+# With flavor and target
 fl run --flavor staging --target lib/main_dev.dart
-```
 
-Only iOS devices please:
-
-```sh
+# Only iOS devices please
 fl run --platform ios
 ```
 
@@ -76,36 +59,17 @@ When picking a device:
 
 ### 🔧 Device Management
 
-See what's cached:
-
 ```sh
-fl device list
-```
-
-Update the list:
-
-```sh
-fl device refresh
-```
-
-Remove a device:
-
-```sh
-fl device rm <device-id>
+fl device list      # See what's cached
+fl device refresh   # Update the list
+fl device rm <id>   # Remove one
 ```
 
 ### 📋 Other Goodies
 
-Alphabetize your pubspec deps:
-
 ```sh
-fl pub sort
-```
-
-Pass commands to Flutter:
-
-```sh
-fl flutter doctor
+fl pub sort         # Alphabetize your pubspec deps
+fl flutter doctor   # Pass commands to Flutter
 ```
 
 ### ⚙️ Run Options
