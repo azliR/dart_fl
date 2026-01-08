@@ -1,3 +1,7 @@
+## 0.16.0
+
+- feat(cli): Devices now ranked per-project first, then globally. When you select a device, it gets prioritized for that specific project directory.
+
 ## 0.15.1
 
 - docs: Overhauled README.md with better structure, features list, and usage guide.

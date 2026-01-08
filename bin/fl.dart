@@ -15,7 +15,7 @@ String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
 /// Current CLI version string.
-const String _version = '0.15.1';
+const String _version = '0.16.0';
 
 /// Duration after which unpicked devices are removed from cache.
 const Duration _staleDeviceDuration = Duration(days: 30);
@@ -981,6 +981,9 @@ class FlutterRunner {
       }
     }
 
+    // Get current project path for project-specific ranking
+    final projectPath = Directory.current.absolute.path;
+
     // Filter and rank devices
     var rankedRecords = records.values.toList();
     if (filter != null) {
@@ -988,8 +991,19 @@ class FlutterRunner {
           rankedRecords.where((r) => filter.matches(r.device)).toList();
     }
 
-    // Sort by pickCount descending (most used first)
-    rankedRecords.sort((a, b) => b.pickCount.compareTo(a.pickCount));
+    // Sort by project pick count first (most used in this project),
+    // then by global pick count (most used overall)
+    rankedRecords.sort((a, b) {
+      final projectPickA = a.pickCountForProject(projectPath);
+      final projectPickB = b.pickCountForProject(projectPath);
+
+      // First, compare by project-specific pick count
+      final projectComparison = projectPickB.compareTo(projectPickA);
+      if (projectComparison != 0) return projectComparison;
+
+      // If equal, compare by global pick count
+      return b.pickCount.compareTo(a.pickCount);
+    });
 
     final devicesForPrompt = rankedRecords.map((r) => r.device).toList();
 
@@ -1007,7 +1021,11 @@ class FlutterRunner {
       print(
         _gray('Auto-selecting first device: ${selected.name} (${selected.id})'),
       );
-      await _incrementDevicePick(selected.id, verbose: verbose);
+      await _incrementDevicePick(
+        selected.id,
+        projectPath: projectPath,
+        verbose: verbose,
+      );
       return selected.id;
     }
 
@@ -1035,7 +1053,11 @@ class FlutterRunner {
 
     // Increment pick count for selected device
     if (selectedId != null) {
-      await _incrementDevicePick(selectedId, verbose: verbose);
+      await _incrementDevicePick(
+        selectedId,
+        projectPath: projectPath,
+        verbose: verbose,
+      );
     }
 
     return selectedId;
@@ -1618,11 +1640,12 @@ Future<Map<String, _DeviceRecord>> _mergeDevicesIntoRecords(
 
   for (final device in fetchedDevices) {
     if (existing.containsKey(device.id)) {
-      // Update device info but preserve pick count and lastPickedAt
+      // Update device info but preserve pick counts and lastPickedAt
       final old = existing[device.id]!;
       existing[device.id] = _DeviceRecord(
         device: device,
         pickCount: old.pickCount,
+        projectPickCounts: old.projectPickCounts,
         lastPickedAt: old.lastPickedAt,
         lastSeenAt: now,
       );
@@ -1631,6 +1654,7 @@ Future<Map<String, _DeviceRecord>> _mergeDevicesIntoRecords(
       existing[device.id] = _DeviceRecord(
         device: device,
         pickCount: 0,
+        projectPickCounts: const {},
         lastPickedAt: null,
         lastSeenAt: now,
       );
@@ -1641,8 +1665,10 @@ Future<Map<String, _DeviceRecord>> _mergeDevicesIntoRecords(
 }
 
 /// Increments the pick count for a device and saves the cache.
+/// If [projectPath] is provided, also increments the project-specific pick count.
 Future<void> _incrementDevicePick(
   String deviceId, {
+  String? projectPath,
   bool verbose = false,
 }) async {
   final records = await _loadDeviceRecords(verbose: verbose) ?? {};
@@ -1650,9 +1676,18 @@ Future<void> _incrementDevicePick(
 
   if (records.containsKey(deviceId)) {
     final old = records[deviceId]!;
+
+    // Update project-specific pick counts
+    final newProjectPickCounts = Map<String, int>.from(old.projectPickCounts);
+    if (projectPath != null) {
+      newProjectPickCounts[projectPath] =
+          (newProjectPickCounts[projectPath] ?? 0) + 1;
+    }
+
     records[deviceId] = _DeviceRecord(
       device: old.device,
       pickCount: old.pickCount + 1,
+      projectPickCounts: newProjectPickCounts,
       lastPickedAt: now,
       lastSeenAt: old.lastSeenAt,
     );
@@ -1915,15 +1950,23 @@ class _FlutterDevice {
 class _DeviceRecord {
   final _FlutterDevice device;
   final int pickCount;
+  final Map<String, int> projectPickCounts;
   final DateTime? lastPickedAt;
   final DateTime? lastSeenAt;
 
   const _DeviceRecord({
     required this.device,
     required this.pickCount,
+    this.projectPickCounts = const {},
     this.lastPickedAt,
     this.lastSeenAt,
   });
+
+  /// Gets the pick count for a specific project path.
+  int pickCountForProject(String? projectPath) {
+    if (projectPath == null) return 0;
+    return projectPickCounts[projectPath] ?? 0;
+  }
 
   static _DeviceRecord? fromJson(Map<String, dynamic> json) {
     final id = json['id']?.toString();
@@ -1937,9 +1980,22 @@ class _DeviceRecord {
       sdk: json['sdk']?.toString(),
     );
 
+    // Parse project pick counts
+    final projectPickCountsJson = json['projectPickCounts'];
+    final projectPickCounts = <String, int>{};
+    if (projectPickCountsJson is Map<String, dynamic>) {
+      for (final entry in projectPickCountsJson.entries) {
+        final count = entry.value;
+        if (count is num) {
+          projectPickCounts[entry.key] = count.toInt();
+        }
+      }
+    }
+
     return _DeviceRecord(
       device: device,
       pickCount: (json['pickCount'] as num?)?.toInt() ?? 0,
+      projectPickCounts: projectPickCounts,
       lastPickedAt:
           json['lastPickedAt'] != null
               ? DateTime.tryParse(json['lastPickedAt'].toString())
@@ -1958,6 +2014,7 @@ class _DeviceRecord {
       'targetPlatform': device.targetPlatform,
       'sdk': device.sdk,
       'pickCount': pickCount,
+      'projectPickCounts': projectPickCounts,
       'lastPickedAt': lastPickedAt?.toIso8601String(),
       'lastSeenAt': lastSeenAt?.toIso8601String(),
     };
