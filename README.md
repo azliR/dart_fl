@@ -11,8 +11,8 @@ A lightweight companion for `flutter run` that makes your life easier with auto 
 - Same `r`, `R`, `q` shortcuts you're used to
 
 ### 📱 Smart Device Management
-- **Project-aware ranking** — Devices you use in this project show up first
-- **Your favorites first** — Most used devices bubble to the top globally too
+- **Smart ranking** — Devices used in this project appear first
+- **Recently used** — Sorted by most recent usage
 - **Remembers everything** — Devices stick around across refreshes
 - **Self-cleaning** — Unused devices auto-remove after 30 days
 - **Smart filtering** — Only shows devices matching your project

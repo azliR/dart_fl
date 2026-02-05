@@ -1,3 +1,7 @@
+## 0.17.0
+
+- refactor(cli): Changed device sorting to prioritize project-specific recency. Devices used in the current project appear first (sorted by last use), followed by globally used devices.
+
 ## 0.16.0
 
 - feat(cli): Devices now ranked per-project first, then globally. When you select a device, it gets prioritized for that specific project directory.
