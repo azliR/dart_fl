@@ -1,3 +1,7 @@
+## 0.18.0
+
+- feat(cli): Add timestamps to all log output for better debugging and tracing.
+
 ## 0.17.0
 
 - refactor(cli): Changed device sorting to prioritize project-specific recency. Devices used in the current project appear first (sorted by last use), followed by globally used devices.
