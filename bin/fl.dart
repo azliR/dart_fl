@@ -14,8 +14,19 @@ String _yellow(String text) => '\x1B[33m$text\x1B[0m';
 String _red(String text) => '\x1B[31m$text\x1B[0m';
 String _gray(String text) => '\x1B[90m$text\x1B[0m';
 
+String _timestamp() {
+  final now = DateTime.now();
+  final y = now.year.toString().padLeft(4, '0');
+  final m = now.month.toString().padLeft(2, '0');
+  final d = now.day.toString().padLeft(2, '0');
+  final h = now.hour.toString().padLeft(2, '0');
+  final min = now.minute.toString().padLeft(2, '0');
+  final sec = now.second.toString().padLeft(2, '0');
+  return '$y/$m/$d $h:$min:$sec';
+}
+
 /// Current CLI version string.
-const String _version = '0.17.0';
+const String _version = '0.18.0';
 
 /// Duration after which unpicked devices are removed from cache.
 const Duration _staleDeviceDuration = Duration(days: 30);
@@ -281,7 +292,7 @@ Future<void> _handleDeviceCommand(List<String> args, bool verbose) async {
   final subcommand = args.first;
 
   if (subcommand == 'refresh') {
-    print(_cyan('Refreshing device cache...'));
+    print('${_gray(_timestamp())} ${_cyan('Refreshing device cache...')}');
     final devices = await _fetchDevices(verbose: verbose);
     if (devices.isNotEmpty) {
       await _saveDeviceCache(devices, verbose: verbose);
@@ -864,7 +875,9 @@ class FlutterRunner {
   }) : forwardedArgs = forwardedArgs ?? const [];
 
   Future<void> run() async {
-    print(_cyan('🚀 Starting Flutter with enhanced features...'));
+    print(
+      '${_gray(_timestamp())} ${_cyan('🚀 Starting Flutter with enhanced features...')}',
+    );
 
     final deviceId = await _resolveDeviceId();
 
@@ -878,7 +891,9 @@ class FlutterRunner {
 
     final commandArgs = _flutterCommand.withArgs(flutterArgs);
     if (verbose) {
-      print(_gray('Running: ${_describeFlutterCommand(commandArgs)}'));
+      print(
+        '${_gray(_timestamp())} ${_gray('Running: ${_describeFlutterCommand(commandArgs)}')}',
+      );
     }
 
     _process = await Process.start(_flutterCommand.executable, commandArgs);
@@ -907,7 +922,7 @@ class FlutterRunner {
   void _handleFlutterOutput(String line) {
     if (line.isEmpty) return;
 
-    print(line);
+    print('${_gray(_timestamp())} $line');
 
     final vmServiceMatch = RegExp(
       r'(?:VM\s+Service|Observatory|Dart\s+VM\s+Service).*?(http://[^\s]+)',
@@ -917,7 +932,9 @@ class FlutterRunner {
     if (vmServiceMatch != null) {
       _vmServiceUri = vmServiceMatch.group(1)!;
       if (verbose) {
-        print(_gray('Found VM Service URI: $_vmServiceUri'));
+        print(
+          '${_gray(_timestamp())} ${_gray('Found VM Service URI: $_vmServiceUri')}',
+        );
       }
       _connectToVmService(_vmServiceUri!);
     }
@@ -927,12 +944,16 @@ class FlutterRunner {
         line.contains('A Dart VM Service')) {
       if (!_appStarted) {
         _appStarted = true;
-        print(_green('✓ App started successfully'));
-        print(_cyan('Commands: r=reload, R=restart, q=quit, h=help'));
+        print('${_gray(_timestamp())} ${_green('✓ App started successfully')}');
+        print(
+          '${_gray(_timestamp())} ${_cyan('Commands: r=reload, R=restart, q=quit, h=help')}',
+        );
 
         if (_vmServiceUri != null && _vmService == null) {
           if (verbose) {
-            print(_gray('Attempting VM Service connection (fallback).'));
+            print(
+              '${_gray(_timestamp())} ${_gray('Attempting VM Service connection (fallback).')}',
+            );
           }
           _connectToVmService(_vmServiceUri!);
         }
@@ -940,11 +961,11 @@ class FlutterRunner {
     }
 
     if (line.contains('Reloaded') || line.contains('reloaded')) {
-      print(_green('✓ Hot reload complete'));
+      print('${_gray(_timestamp())} ${_green('✓ Hot reload complete')}');
     }
 
     if (line.contains('Restarted') || line.contains('restarted')) {
-      print(_green('✓ Hot restart complete'));
+      print('${_gray(_timestamp())} ${_green('✓ Hot restart complete')}');
     }
   }
 
@@ -965,11 +986,13 @@ class FlutterRunner {
     var usingCachedDevices = records.isNotEmpty;
 
     if (!forceDeviceRefresh && usingCachedDevices) {
-      print(_gray('Using cached device list (press "r" to refresh).'));
+      print(
+        '${_gray(_timestamp())} ${_gray('Using cached device list (press "r" to refresh).')}',
+      );
     }
 
     if (forceDeviceRefresh || !usingCachedDevices) {
-      print(_gray('Fetching device list...'));
+      print('${_gray(_timestamp())} ${_gray('Fetching device list...')}');
       final fetchedDevices = await _fetchDevices(verbose: verbose);
       if (fetchedDevices.isNotEmpty) {
         records = await _mergeDevicesIntoRecords(
@@ -1293,7 +1316,9 @@ class FlutterRunner {
   Future<void> _connectToVmService(String uri) async {
     if (_vmService != null) {
       if (verbose) {
-        print(_gray('Already connected to VM Service.'));
+        print(
+          '${_gray(_timestamp())} ${_gray('Already connected to VM Service.')}',
+        );
       }
       return;
     }
@@ -1304,12 +1329,16 @@ class FlutterRunner {
           .replaceFirst('https://', 'wss://');
 
       if (verbose) {
-        print(_gray('Connecting to VM Service at $wsUri'));
+        print(
+          '${_gray(_timestamp())} ${_gray('Connecting to VM Service at $wsUri')}',
+        );
       }
 
       _vmService = await vmServiceConnectUri(wsUri);
 
-      print(_green('✓ Connected to VM Service for enhanced logging'));
+      print(
+        '${_gray(_timestamp())} ${_green('✓ Connected to VM Service for enhanced logging')}',
+      );
 
       await _vmService!.streamListen(EventStreams.kStdout);
       await _vmService!.streamListen(EventStreams.kStderr);
@@ -1320,11 +1349,13 @@ class FlutterRunner {
           final message = utf8.decode(base64Decode(event.bytes!));
           final trimmed = message.trimRight();
           if (trimmed.isNotEmpty) {
-            print(trimmed);
+            print('${_gray(_timestamp())} $trimmed');
           }
         } catch (e) {
           if (verbose) {
-            print(_gray('Failed to decode stdout: $e'));
+            print(
+              '${_gray(_timestamp())} ${_gray('Failed to decode stdout: $e')}',
+            );
           }
         }
       });
@@ -1334,11 +1365,13 @@ class FlutterRunner {
           final message = utf8.decode(base64Decode(event.bytes!));
           final trimmed = message.trimRight();
           if (trimmed.isNotEmpty) {
-            print(_red(trimmed));
+            print('${_gray(_timestamp())} ${_red(trimmed)}');
           }
         } catch (e) {
           if (verbose) {
-            print(_gray('Failed to decode stderr: $e'));
+            print(
+              '${_gray(_timestamp())} ${_gray('Failed to decode stderr: $e')}',
+            );
           }
         }
       });
@@ -1360,12 +1393,16 @@ class FlutterRunner {
         if (err.isNotEmpty) b.write('  error: $err');
         if (st.isNotEmpty) b.write('\n$st');
 
-        print(_yellow(b.toString()));
+        print('${_gray(_timestamp())} ${_yellow(b.toString())}');
       });
     } catch (e) {
-      print(_red('Failed to connect to VM Service: $e'));
+      print(
+        '${_gray(_timestamp())} ${_red('Failed to connect to VM Service: $e')}',
+      );
       if (verbose) {
-        print(_gray('Enhanced logging will not be available'));
+        print(
+          '${_gray(_timestamp())} ${_gray('Enhanced logging will not be available')}',
+        );
       }
     }
   }
@@ -1424,7 +1461,9 @@ class FlutterRunner {
 
       if (char == 'r') {
         if (!_appStarted) {
-          print(_yellow('⏳ Waiting for app to start...'));
+          print(
+            '${_gray(_timestamp())} ${_yellow('⏳ Waiting for app to start...')}',
+          );
           return;
         }
         _hotReload();
@@ -1433,7 +1472,9 @@ class FlutterRunner {
 
       if (char == 'R') {
         if (!_appStarted) {
-          print(_yellow('⏳ Waiting for app to start...'));
+          print(
+            '${_gray(_timestamp())} ${_yellow('⏳ Waiting for app to start...')}',
+          );
           return;
         }
         _hotRestart();
@@ -1460,11 +1501,15 @@ class FlutterRunner {
   void _setupFileWatcher() {
     final libDir = Directory('lib');
     if (!libDir.existsSync()) {
-      print(_yellow('Warning: lib directory not found'));
+      print(
+        '${_gray(_timestamp())} ${_yellow('Warning: lib directory not found')}',
+      );
       return;
     }
 
-    print(_gray('👀 Watching for file changes in lib/...'));
+    print(
+      '${_gray(_timestamp())} ${_gray('👀 Watching for file changes in lib/...')}',
+    );
 
     final watcher = DirectoryWatcher(libDir.path);
     _watcherSubscription = watcher.events.listen((event) {
@@ -1484,7 +1529,7 @@ class FlutterRunner {
     _reloadDebounceTimer?.cancel();
     _reloadDebounceTimer = Timer(const Duration(milliseconds: 500), () {
       if (!_isReloading && _appStarted) {
-        print(_cyan('📝 File changed: $fileName'));
+        print('${_gray(_timestamp())} ${_cyan('📝 File changed: $fileName')}');
         _hotReload();
       }
     });
@@ -1496,11 +1541,11 @@ class FlutterRunner {
     _isReloading = true;
 
     try {
-      print(_cyan('🔥 Hot reload...'));
+      print('${_gray(_timestamp())} ${_cyan('🔥 Hot reload...')}');
       _process!.stdin.write('r');
       await Future.delayed(const Duration(milliseconds: 1000));
     } catch (e) {
-      print(_red('Hot reload failed: $e'));
+      print('${_gray(_timestamp())} ${_red('Hot reload failed: $e')}');
     } finally {
       _isReloading = false;
     }
@@ -1512,11 +1557,11 @@ class FlutterRunner {
     _isReloading = true;
 
     try {
-      print(_cyan('🔄 Hot restart...'));
+      print('${_gray(_timestamp())} ${_cyan('🔄 Hot restart...')}');
       _process!.stdin.write('R');
       await Future.delayed(const Duration(milliseconds: 2000));
     } catch (e) {
-      print(_red('Hot restart failed: $e'));
+      print('${_gray(_timestamp())} ${_red('Hot restart failed: $e')}');
     } finally {
       _isReloading = false;
     }
@@ -1695,8 +1740,9 @@ Future<void> _recordDevicePick(
     final old = records[deviceId]!;
 
     // Update project-specific timestamp
-    final newProjectLastPickedAt =
-        Map<String, DateTime>.from(old.projectLastPickedAt);
+    final newProjectLastPickedAt = Map<String, DateTime>.from(
+      old.projectLastPickedAt,
+    );
     if (projectPath != null) {
       newProjectLastPickedAt[projectPath] = now;
     }
